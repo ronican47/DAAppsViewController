@@ -242,7 +242,7 @@ async def init_mock_data():
         Contact(name="Emre Kaya", phone="+90555567890", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face", is_online=True),
         Contact(name="Zeynep Özkan", phone="+90555678901", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face", is_online=False),
         Contact(name="Burak Aydın", phone="+90555789012", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Selin Çelik", phone="+90555890123", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&h=100&fit=crop&crop=face", is_online=false),
+        Contact(name="Selin Çelik", phone="+90555890123", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&h=100&fit=crop&crop=face", is_online=False),
     ]
     
     # Create Telegram contacts
