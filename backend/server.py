@@ -1084,6 +1084,86 @@ async def connect_telegram(
     return {"message": "Telegram connected successfully", "status": "connected"}
 
 
+# Translation Routes
+@api_router.get("/languages")
+async def get_supported_languages():
+    """Get list of supported languages"""
+    return {
+        "languages": SUPPORTED_LANGUAGES,
+        "total": len(SUPPORTED_LANGUAGES)
+    }
+
+
+@api_router.post("/translate")
+async def translate_message(
+    translate_req: TranslateRequest,
+    current_user: User = Depends(get_current_user_required)
+):
+    """Translate text to target language"""
+    result = await translate_text(
+        translate_req.text,
+        translate_req.target_language,
+        translate_req.source_language
+    )
+    
+    return result
+
+
+@api_router.post("/detect-language")
+async def detect_text_language(
+    text: str = Form(...),
+    current_user: User = Depends(get_current_user_required)
+):
+    """Detect language of given text"""
+    detected_lang = detect_language(text)
+    language_name = SUPPORTED_LANGUAGES.get(detected_lang, "Unknown")
+    
+    return {
+        "detected_language": detected_lang,
+        "language_name": language_name,
+        "confidence": 0.8  # Simulated confidence
+    }
+
+
+@api_router.get("/user/language-settings")
+async def get_user_language_settings(
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get user's language settings"""
+    return {
+        "preferred_language": current_user.preferred_language,
+        "auto_translate": current_user.auto_translate,
+        "interface_language": current_user.interface_language,
+        "supported_languages": SUPPORTED_LANGUAGES
+    }
+
+
+@api_router.post("/user/language-settings")
+async def update_user_language_settings(
+    settings: LanguageSettings,
+    current_user: User = Depends(get_current_user_required)
+):
+    """Update user's language settings"""
+    
+    # Validate language codes
+    if settings.preferred_language not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported preferred language")
+    if settings.interface_language not in SUPPORTED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="Unsupported interface language")
+    
+    # Update user settings
+    await db.users.update_one(
+        {"id": current_user.id},
+        {"$set": {
+            "preferred_language": settings.preferred_language,
+            "auto_translate": settings.auto_translate,
+            "interface_language": settings.interface_language
+        }}
+    )
+    
+    return {"message": "Language settings updated successfully"}
+
+
 # WebSocket endpoint
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
