@@ -194,6 +194,40 @@ class Message(BaseModel):
     message_type: str = "text"  # text, image, video, file, audio
 
 
+class Group(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: Optional[str] = None
+    platform: Platform
+    creator_id: str
+    admin_ids: List[str] = []
+    member_ids: List[str] = []
+    avatar_url: Optional[str] = None
+    is_public: bool = False
+    invite_link: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    member_count: int = 0
+    max_members: int = 256  # WhatsApp limit
+
+
+class Channel(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: Optional[str] = None
+    platform: Platform
+    creator_id: str
+    admin_ids: List[str] = []
+    subscriber_ids: List[str] = []
+    avatar_url: Optional[str] = None
+    is_public: bool = True
+    invite_link: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    subscriber_count: int = 0
+    can_subscribers_message: bool = False  # Only admins can send messages by default
+
+
 class Conversation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     participant_ids: List[str]
@@ -204,6 +238,9 @@ class Conversation(BaseModel):
     last_activity: datetime = Field(default_factory=datetime.utcnow)
     created_by: str
     is_encrypted: bool = True
+    # For group/channel conversations
+    group_id: Optional[str] = None
+    channel_id: Optional[str] = None
 
 
 class ContactCreate(BaseModel):
