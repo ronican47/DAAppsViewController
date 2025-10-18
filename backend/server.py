@@ -186,6 +186,16 @@ class FileMessage(BaseModel):
     thumbnail_path: Optional[str] = None  # For images/videos
 
 
+class Translation(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    original_text: str
+    translated_text: str
+    source_language: str
+    target_language: str
+    confidence: float = 0.0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Message(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     conversation_id: str
@@ -200,6 +210,11 @@ class Message(BaseModel):
     is_read: bool = False
     encrypted_content: Optional[str] = None  # E2E encrypted content
     message_type: str = "text"  # text, image, video, file, audio
+    
+    # Translation support
+    original_language: Optional[str] = None
+    translations: Dict[str, str] = {}  # {"en": "Hello", "tr": "Merhaba", "de": "Hallo"}
+    auto_detected_language: Optional[str] = None
 
 
 class Group(BaseModel):
