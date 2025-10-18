@@ -57,8 +57,16 @@
   "scripts": {
     "start": "craco start",
     "build": "craco build",
-    "test": "craco test"
+    "test": "craco test",
+    "electron": "electron .",
+    "electron-dev": "concurrently \"cross-env BROWSER=none yarn start\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron-build": "yarn build && electron-builder --win --x64",
+    "electron-build-all": "yarn build && electron-builder --win --mac --linux",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
   },
+  "main": "public/electron.js",
+  "homepage": "./",
   "browserslist": {
     "production": [
       ">0.2%",
