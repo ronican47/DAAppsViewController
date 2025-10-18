@@ -25,15 +25,11 @@ import json
 from bson import ObjectId
 import random
 import aiohttp
-from googletrans import Translator
 import langdetect
 
 # Import new LLM service and mock integrations
 from llm_service import translation_service, stt_service
 from mock_integrations import whatsapp_mock, telegram_mock
-
-# Create a translator instance (fallback)
-translator = Translator()
 
 # Language settings
 SUPPORTED_LANGUAGES = {
