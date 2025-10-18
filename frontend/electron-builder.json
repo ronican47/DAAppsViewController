@@ -1,0 +1,80 @@
+{
+  "appId": "com.whatgram.app",
+  "productName": "WhatGram",
+  "copyright": "Copyright © 2025 WhatGram",
+  "directories": {
+    "buildResources": "build-resources",
+    "output": "dist-electron"
+  },
+  "files": [
+    "build/**/*",
+    "public/electron.js",
+    "node_modules/**/*"
+  ],
+  "extraMetadata": {
+    "main": "public/electron.js"
+  },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64", "ia32"]
+      },
+      {
+        "target": "portable",
+        "arch": ["x64"]
+      }
+    ],
+    "icon": "build-resources/icon.ico",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "publisherName": "WhatGram",
+    "verifyUpdateCodeSignature": false
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "WhatGram",
+    "installerIcon": "build-resources/icon.ico",
+    "uninstallerIcon": "build-resources/icon.ico",
+    "installerHeaderIcon": "build-resources/icon.ico",
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish": true,
+    "license": "LICENSE.txt"
+  },
+  "portable": {
+    "artifactName": "${productName}-Portable-${version}.${ext}"
+  },
+  "mac": {
+    "target": ["dmg", "zip"],
+    "icon": "build-resources/icon.icns",
+    "category": "public.app-category.social-networking",
+    "darkModeSupport": true
+  },
+  "dmg": {
+    "contents": [
+      {
+        "x": 130,
+        "y": 220
+      },
+      {
+        "x": 410,
+        "y": 220,
+        "type": "link",
+        "path": "/Applications"
+      }
+    ],
+    "window": {
+      "width": 540,
+      "height": 380
+    }
+  },
+  "linux": {
+    "target": ["AppImage", "deb", "rpm"],
+    "icon": "build-resources/icon.png",
+    "category": "Network;InstantMessaging",
+    "maintainer": "WhatGram <support@whatgram.com>"
+  },
+  "publish": null
+}
