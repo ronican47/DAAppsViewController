@@ -732,6 +732,218 @@ async def get_file(filename: str):
     return FileResponse(file_path)
 
 
+# Group Management Routes
+@api_router.get("/groups", response_model=List[Group])
+async def get_groups(
+    platform: Optional[Platform] = None,
+    current_user: User = Depends(get_current_user_required)
+):
+    filter_dict = {
+        "$or": [
+            {"member_ids": current_user.id},
+            {"admin_ids": current_user.id},
+            {"creator_id": current_user.id}
+        ]
+    }
+    if platform:
+        filter_dict["platform"] = platform.value
+    
+    groups = await db.groups.find(filter_dict).sort("updated_at", -1).to_list(1000)
+    # Remove MongoDB ObjectId
+    for group in groups:
+        group.pop("_id", None)
+    return [Group(**group) for group in groups]
+
+
+@api_router.post("/groups", response_model=Group)
+async def create_group(
+    group_data: GroupCreate,
+    current_user: User = Depends(get_current_user_required)
+):
+    # Create group
+    group = Group(
+        name=group_data.name,
+        description=group_data.description,
+        platform=group_data.platform,
+        creator_id=current_user.id,
+        admin_ids=[current_user.id],
+        member_ids=[current_user.id],
+        is_public=group_data.is_public,
+        member_count=1
+    )
+    
+    # Add members by phone numbers
+    if group_data.member_phones:
+        for phone in group_data.member_phones:
+            normalized_phone = normalize_phone(phone)
+            user = await db.users.find_one({"phone": normalized_phone})
+            if user:
+                group.member_ids.append(user["id"])
+                group.member_count += 1
+    
+    # Generate invite link
+    group.invite_link = f"https://whatgram.app/join/{group.id}"
+    
+    await db.groups.insert_one(group.dict())
+    
+    # Create conversation for the group
+    conversation = Conversation(
+        participant_ids=group.member_ids,
+        platform=group_data.platform,
+        conversation_type="group",
+        title=group.name,
+        created_by=current_user.id,
+        group_id=group.id
+    )
+    await db.conversations.insert_one(conversation.dict())
+    
+    return group
+
+
+@api_router.post("/groups/{group_id}/members")
+async def manage_group_member(
+    group_id: str,
+    action_data: GroupMemberAction,
+    current_user: User = Depends(get_current_user_required)
+):
+    # Find group
+    group = await db.groups.find_one({"id": group_id})
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+    
+    group_obj = Group(**group)
+    
+    # Check if user is admin
+    if current_user.id not in group_obj.admin_ids and current_user.id != group_obj.creator_id:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    # Find target user
+    normalized_phone = normalize_phone(action_data.user_phone)
+    target_user = await db.users.find_one({"phone": normalized_phone})
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    target_user_id = target_user["id"]
+    
+    # Perform action
+    if action_data.action == "add":
+        if target_user_id not in group_obj.member_ids:
+            group_obj.member_ids.append(target_user_id)
+            group_obj.member_count += 1
+    elif action_data.action == "remove":
+        if target_user_id in group_obj.member_ids:
+            group_obj.member_ids.remove(target_user_id)
+            group_obj.member_count -= 1
+        if target_user_id in group_obj.admin_ids:
+            group_obj.admin_ids.remove(target_user_id)
+    elif action_data.action == "promote":
+        if target_user_id in group_obj.member_ids and target_user_id not in group_obj.admin_ids:
+            group_obj.admin_ids.append(target_user_id)
+    elif action_data.action == "demote":
+        if target_user_id in group_obj.admin_ids and target_user_id != group_obj.creator_id:
+            group_obj.admin_ids.remove(target_user_id)
+    
+    # Update group
+    await db.groups.update_one(
+        {"id": group_id},
+        {"$set": group_obj.dict()}
+    )
+    
+    # Update conversation participants
+    await db.conversations.update_one(
+        {"group_id": group_id},
+        {"$set": {"participant_ids": group_obj.member_ids}}
+    )
+    
+    return {"message": f"Member {action_data.action} successful", "member_count": group_obj.member_count}
+
+
+# Channel Management Routes
+@api_router.get("/channels", response_model=List[Channel])
+async def get_channels(
+    platform: Optional[Platform] = None,
+    current_user: User = Depends(get_current_user_required)
+):
+    filter_dict = {
+        "$or": [
+            {"subscriber_ids": current_user.id},
+            {"admin_ids": current_user.id},
+            {"creator_id": current_user.id}
+        ]
+    }
+    if platform:
+        filter_dict["platform"] = platform.value
+    
+    channels = await db.channels.find(filter_dict).sort("updated_at", -1).to_list(1000)
+    # Remove MongoDB ObjectId
+    for channel in channels:
+        channel.pop("_id", None)
+    return [Channel(**channel) for channel in channels]
+
+
+@api_router.post("/channels", response_model=Channel)
+async def create_channel(
+    channel_data: ChannelCreate,
+    current_user: User = Depends(get_current_user_required)
+):
+    # Create channel
+    channel = Channel(
+        name=channel_data.name,
+        description=channel_data.description,
+        platform=channel_data.platform,
+        creator_id=current_user.id,
+        admin_ids=[current_user.id],
+        subscriber_ids=[current_user.id],
+        is_public=channel_data.is_public,
+        can_subscribers_message=channel_data.can_subscribers_message,
+        subscriber_count=1
+    )
+    
+    # Generate invite link
+    channel.invite_link = f"https://whatgram.app/channel/{channel.id}"
+    
+    await db.channels.insert_one(channel.dict())
+    
+    # Create conversation for the channel
+    conversation = Conversation(
+        participant_ids=[current_user.id],  # Only admins can message by default
+        platform=channel_data.platform,
+        conversation_type="channel",
+        title=channel.name,
+        created_by=current_user.id,
+        channel_id=channel.id
+    )
+    await db.conversations.insert_one(conversation.dict())
+    
+    return channel
+
+
+@api_router.post("/channels/{channel_id}/subscribe")
+async def subscribe_to_channel(
+    channel_id: str,
+    current_user: User = Depends(get_current_user_required)
+):
+    # Find channel
+    channel = await db.channels.find_one({"id": channel_id})
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    
+    channel_obj = Channel(**channel)
+    
+    # Add user to subscribers if not already subscribed
+    if current_user.id not in channel_obj.subscriber_ids:
+        channel_obj.subscriber_ids.append(current_user.id)
+        channel_obj.subscriber_count += 1
+        
+        # Update channel
+        await db.channels.update_one(
+            {"id": channel_id},
+            {"$set": channel_obj.dict()}
+        )
+    
+    return {"message": "Successfully subscribed to channel", "subscriber_count": channel_obj.subscriber_count}
+
+
 # Platform Connection Routes
 @api_router.post("/connect/whatsapp")
 async def connect_whatsapp(
