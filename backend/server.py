@@ -28,7 +28,11 @@ import aiohttp
 from googletrans import Translator
 import langdetect
 
-# Create a translator instance
+# Import new LLM service and mock integrations
+from llm_service import translation_service, stt_service
+from mock_integrations import whatsapp_mock, telegram_mock
+
+# Create a translator instance (fallback)
 translator = Translator()
 
 # Language settings
