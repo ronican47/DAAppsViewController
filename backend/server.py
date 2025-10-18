@@ -1099,6 +1099,106 @@ async def init_mock_data():
                     msg.encrypted_content = encrypt_message(msg.content)
                 await db.messages.insert_one(msg.dict())
     
+    # Create demo groups for each platform
+    demo_groups = []
+    for platform in [Platform.WHATSAPP, Platform.TELEGRAM, Platform.WHATGRAM]:
+        platform_name = platform.value.capitalize()
+        
+        # Tech group
+        tech_group = Group(
+            name=f"{platform_name} Tech Grubu",
+            description=f"{platform_name} teknoloji ve geliştirme grubu",
+            platform=platform,
+            creator_id=demo_user.id,
+            admin_ids=[demo_user.id],
+            member_ids=[demo_user.id] + [c.id for c in all_contacts if c.platform == platform][:3],
+            is_public=True,
+            invite_link=f"https://whatgram.app/join/tech-{platform.value}",
+            member_count=4
+        )
+        demo_groups.append(tech_group)
+        await db.groups.insert_one(tech_group.dict())
+        
+        # Create conversation for group
+        group_conv = Conversation(
+            participant_ids=tech_group.member_ids,
+            platform=platform,
+            conversation_type="group",
+            title=tech_group.name,
+            created_by=demo_user.id,
+            group_id=tech_group.id
+        )
+        await db.conversations.insert_one(group_conv.dict())
+        
+        # Add group messages
+        group_messages = [
+            Message(
+                conversation_id=group_conv.id,
+                sender_id=demo_user.id,
+                receiver_id="",
+                content=f"{platform_name} Tech Grubu'na hoş geldiniz! 🚀",
+                platform=platform
+            ),
+            Message(
+                conversation_id=group_conv.id,
+                sender_id=tech_group.member_ids[1] if len(tech_group.member_ids) > 1 else demo_user.id,
+                receiver_id="",
+                content="Merhaba! Bu grup harika görünüyor 👍",
+                platform=platform
+            )
+        ]
+        
+        for msg in group_messages:
+            if msg.platform == Platform.WHATGRAM and msg.content:
+                msg.encrypted_content = encrypt_message(msg.content)
+            await db.messages.insert_one(msg.dict())
+    
+    # Create demo channels
+    demo_channels = []
+    for platform in [Platform.WHATSAPP, Platform.TELEGRAM, Platform.WHATGRAM]:
+        platform_name = platform.value.capitalize()
+        
+        # News channel
+        news_channel = Channel(
+            name=f"{platform_name} Haberler",
+            description=f"{platform_name} güncel haberler ve duyurular",
+            platform=platform,
+            creator_id=demo_user.id,
+            admin_ids=[demo_user.id],
+            subscriber_ids=[demo_user.id] + [c.id for c in all_contacts if c.platform == platform][:5],
+            is_public=True,
+            invite_link=f"https://whatgram.app/channel/news-{platform.value}",
+            can_subscribers_message=False,
+            subscriber_count=6
+        )
+        demo_channels.append(news_channel)
+        await db.channels.insert_one(news_channel.dict())
+        
+        # Create conversation for channel
+        channel_conv = Conversation(
+            participant_ids=[demo_user.id],  # Only admin can message
+            platform=platform,
+            conversation_type="channel",
+            title=news_channel.name,
+            created_by=demo_user.id,
+            channel_id=news_channel.id
+        )
+        await db.conversations.insert_one(channel_conv.dict())
+        
+        # Add channel announcement
+        announcement = Message(
+            conversation_id=channel_conv.id,
+            sender_id=demo_user.id,
+            receiver_id="",
+            content=f"📢 {platform_name} Haberler kanalına hoş geldiniz! Güncel haberler için takipte kalın.",
+            platform=platform,
+            message_type="announcement"
+        )
+        
+        if announcement.platform == Platform.WHATGRAM and announcement.content:
+            announcement.encrypted_content = encrypt_message(announcement.content)
+        await db.messages.insert_one(announcement.dict())
+    
     # Create demo user token
     access_token = create_access_token(data={"sub": demo_user.id}, expires_delta=timedelta(hours=24))
     
@@ -1111,6 +1211,8 @@ async def init_mock_data():
         },
         "contacts_created": len(all_contacts),
         "conversations_created": len(conversations),
+        "groups_created": len(demo_groups),
+        "channels_created": len(demo_channels),
         "platforms": ["WhatsApp", "Telegram", "WhatGram"]
     }
 
