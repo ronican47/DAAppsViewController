@@ -386,6 +386,7 @@ async def create_conversation(
     })
     
     if existing_conv:
+        existing_conv.pop("_id", None)
         return Conversation(**existing_conv)
     
     conversation = Conversation(
