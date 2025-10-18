@@ -375,6 +375,18 @@ class GroupMemberAction(BaseModel):
     action: str  # "add", "remove", "promote", "demote"
 
 
+class TranslateRequest(BaseModel):
+    text: str
+    target_language: str
+    source_language: Optional[str] = None
+
+
+class LanguageSettings(BaseModel):
+    preferred_language: str
+    auto_translate: bool
+    interface_language: str
+
+
 # Utility functions
 def normalize_phone(phone: str) -> str:
     """Normalize phone number format"""
