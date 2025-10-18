@@ -367,6 +367,9 @@ async def get_conversations(
         filter_dict["platform"] = platform.value
     
     conversations = await db.conversations.find(filter_dict).sort("last_activity", -1).to_list(1000)
+    # Remove MongoDB ObjectId
+    for conv in conversations:
+        conv.pop("_id", None)
     return [Conversation(**conv) for conv in conversations]
 
 
