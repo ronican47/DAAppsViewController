@@ -1,15 +1,188 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 import axios from 'axios';
+import { getTranslation, getSupportedLanguages } from './translations';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
+// Language Settings Modal
+const LanguageSettingsModal = ({ isOpen, onClose, currentUser, token, onLanguageUpdated }) => {
+  const [settings, setSettings] = useState({
+    interfaceLanguage: currentUser?.interface_language || 'tr',
+    preferredLanguage: currentUser?.preferred_language || 'tr',
+    autoTranslate: currentUser?.auto_translate !== undefined ? currentUser.auto_translate : true
+  });
+  const [loading, setLoading] = useState(false);
+  const [languages] = useState(getSupportedLanguages());
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      await axios.post(`${API}/user/language-settings`, {
+        interface_language: settings.interfaceLanguage,
+        preferred_language: settings.preferredLanguage,
+        auto_translate: settings.autoTranslate
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      alert('Dil ayarları güncellendi!');
+      onLanguageUpdated(settings);
+      onClose();
+    } catch (error) {
+      alert('Dil ayarları güncellenirken hata oluştu!');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+        <h3 className="text-xl font-bold mb-4">🌍 Dil Ayarları</h3>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Arayüz Dili
+            </label>
+            <select
+              value={settings.interfaceLanguage}
+              onChange={(e) => setSettings({...settings, interfaceLanguage: e.target.value})}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {Object.entries(languages).map(([code, name]) => (
+                <option key={code} value={code}>{name}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Tercih Edilen Dil (Çeviri için)
+            </label>
+            <select
+              value={settings.preferredLanguage}
+              onChange={(e) => setSettings({...settings, preferredLanguage: e.target.value})}
+              className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {Object.entries(languages).map(([code, name]) => (
+                <option key={code} value={code}>{name}</option>
+              ))}
+            </select>
+          </div>
+          
+          <div>
+            <label className="flex items-center">
+              <input
+                type="checkbox"
+                checked={settings.autoTranslate}
+                onChange={(e) => setSettings({...settings, autoTranslate: e.target.checked})}
+                className="mr-2"
+              />
+              Gelen mesajları otomatik olarak çevir
+            </label>
+          </div>
+        </div>
+        
+        <div className="flex space-x-2 mt-6">
+          <button
+            onClick={handleSave}
+            disabled={loading}
+            className="flex-1 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400"
+          >
+            {loading ? 'Kaydediliyor...' : 'Kaydet'}
+          </button>
+          <button
+            onClick={onClose}
+            className="flex-1 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+          >
+            İptal
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Message Translation Component
+const MessageTranslation = ({ message, userLanguage, token }) => {
+  const [showTranslation, setShowTranslation] = useState(false);
+  const [translatedText, setTranslatedText] = useState('');
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [availableTranslations] = useState(message.translations || {});
+
+  const handleTranslate = async () => {
+    if (availableTranslations[userLanguage]) {
+      setTranslatedText(availableTranslations[userLanguage]);
+      setShowTranslation(true);
+      return;
+    }
+
+    setIsTranslating(true);
+    try {
+      const response = await axios.post(`${API}/translate`, {
+        text: message.content,
+        target_language: userLanguage,
+        source_language: message.auto_detected_language
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      setTranslatedText(response.data.translated_text);
+      setShowTranslation(true);
+    } catch (error) {
+      console.error('Translation error:', error);
+    } finally {
+      setIsTranslating(false);
+    }
+  };
+
+  const needsTranslation = message.auto_detected_language && 
+                          message.auto_detected_language !== userLanguage &&
+                          message.content;
+
+  if (!needsTranslation) return null;
+
+  return (
+    <div className="mt-2">
+      {!showTranslation ? (
+        <button
+          onClick={handleTranslate}
+          disabled={isTranslating}
+          className="text-xs text-blue-600 hover:text-blue-800 underline"
+        >
+          {isTranslating ? '🔄 Çeviriliyor...' : '🌍 Çevir'}
+        </button>
+      ) : (
+        <div className="mt-2 p-2 bg-blue-50 rounded border-l-4 border-blue-400">
+          <div className="flex justify-between items-start">
+            <p className="text-sm text-blue-800">{translatedText}</p>
+            <button
+              onClick={() => setShowTranslation(false)}
+              className="text-xs text-blue-600 hover:text-blue-800 underline ml-2"
+            >
+              Orijinal
+            </button>
+          </div>
+          <p className="text-xs text-blue-600 mt-1">
+            🌍 {getSupportedLanguages()[message.auto_detected_language]} → {getSupportedLanguages()[userLanguage]}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // Phone Auth Components
-const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
-  const [step, setStep] = useState('phone'); // 'phone' or 'verify'
+const PhoneAuthModal = ({ isOpen, onClose, onLogin, language = 'tr' }) => {
+  const t = (key, params) => getTranslation(key, language, params);
+  const [step, setStep] = useState('phone');
   const [formData, setFormData] = useState({
-    phone: '+905551234567', // Demo phone pre-filled
+    phone: '+905551234567',
     code: '',
     username: ''
   });
@@ -27,7 +200,6 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
   }, [countdown]);
 
   const formatPhone = (phone) => {
-    // Format phone for display
     const cleaned = phone.replace(/\D/g, '');
     if (cleaned.startsWith('90')) {
       return `+${cleaned.slice(0, 2)} ${cleaned.slice(2, 5)} ${cleaned.slice(5, 8)} ${cleaned.slice(8, 10)} ${cleaned.slice(10)}`;
@@ -45,10 +217,12 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
       });
       
       setStep('verify');
-      setCountdown(300); // 5 minutes
-      alert('Doğrulama kodu gönderildi! Demo için: 123456');
+      setCountdown(300);
+      alert(language === 'en' ? 
+        'Verification code sent! Demo code: 123456' : 
+        'Doğrulama kodu gönderildi! Demo için: 123456');
     } catch (error) {
-      alert(error.response?.data?.detail || 'Kod gönderimi başarısız');
+      alert(error.response?.data?.detail || t('sendingFailed'));
     } finally {
       setLoading(false);
     }
@@ -72,7 +246,7 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
       onLogin(access_token, user);
       onClose();
     } catch (error) {
-      alert(error.response?.data?.detail || 'Doğrulama başarısız');
+      alert(error.response?.data?.detail || t('verificationFailed'));
     } finally {
       setLoading(false);
     }
@@ -84,15 +258,15 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" data-testid="auth-modal">
       <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
         <div className="text-center mb-6">
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">WhatGram</h2>
-          <p className="text-gray-600">Telefon numaranızla giriş yapın</p>
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">{t('appName')}</h2>
+          <p className="text-gray-600">{t('phoneAuth')}</p>
         </div>
 
         {step === 'phone' && (
           <form onSubmit={handlePhoneSubmit} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Telefon Numarası
+                {t('phoneNumber')}
               </label>
               <input
                 type="tel"
@@ -103,9 +277,7 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
                 required
                 data-testid="phone-input"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                Ülke kodu ile birlikte telefon numaranızı girin
-              </p>
+              <p className="text-xs text-gray-500 mt-1">{t('phoneHint')}</p>
             </div>
             <button
               type="submit"
@@ -115,11 +287,11 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
               }`}
               data-testid="request-code-btn"
             >
-              {loading ? 'Kod Gönderiliyor...' : 'Doğrulama Kodu Gönder'}
+              {loading ? t('sendingCode') : t('sendCode')}
             </button>
             
             <div className="mt-4 p-3 bg-purple-50 rounded-lg">
-              <p className="text-xs text-purple-700 font-medium">Demo Hesap:</p>
+              <p className="text-xs text-purple-700 font-medium">{t('demoAccount')}</p>
               <p className="text-xs text-purple-600">Telefon: +90 555 123 45 67</p>
               <p className="text-xs text-purple-600">Kod: 123456</p>
             </div>
@@ -134,14 +306,17 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
               </p>
               {countdown > 0 && (
                 <p className="text-sm text-gray-500 mt-2">
-                  Kod {Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')} dakika geçerli
+                  {t('codeExpires', { 
+                    minutes: Math.floor(countdown / 60), 
+                    seconds: (countdown % 60).toString().padStart(2, '0') 
+                  })}
                 </p>
               )}
             </div>
             
             <input
               type="text"
-              placeholder="6 haneli kod"
+              placeholder={t('verificationCode')}
               value={formData.code}
               onChange={(e) => setFormData({...formData, code: e.target.value.replace(/\D/g, '').slice(0, 6)})}
               className="w-full p-4 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
@@ -160,7 +335,7 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
               }`}
               data-testid="verify-code-btn"
             >
-              {loading ? 'Doğrulanıyor...' : 'Doğrula ve Giriş Yap'}
+              {loading ? t('verifying') : t('verify')}
             </button>
             
             <button
@@ -171,7 +346,7 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
               }}
               className="w-full py-2 px-4 text-gray-600 hover:text-gray-800"
             >
-              ← Telefon numarasını değiştir
+              {t('changePhone')}
             </button>
             
             {countdown === 0 && (
@@ -180,7 +355,7 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
                 onClick={handlePhoneSubmit}
                 className="w-full py-2 px-4 text-purple-600 hover:text-purple-800 font-medium"
               >
-                Kodu tekrar gönder
+                {t('resendCode')}
               </button>
             )}
           </form>
@@ -190,8 +365,9 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
   );
 };
 
-// Group/Channel Creation Modals
-const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated }) => {
+// Group/Channel Creation Modals (with translation support)
+const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated, language = 'tr' }) => {
+  const t = (key) => getTranslation(key, language);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -220,12 +396,12 @@ const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated })
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      alert('Grup başarıyla oluşturuldu!');
+      alert(language === 'en' ? 'Group created successfully!' : 'Grup başarıyla oluşturuldu!');
       onGroupCreated();
       onClose();
       setFormData({ name: '', description: '', isPublic: false, memberPhones: '' });
     } catch (error) {
-      alert(error.response?.data?.detail || 'Grup oluşturma başarısız');
+      alert(error.response?.data?.detail || (language === 'en' ? 'Group creation failed' : 'Grup oluşturma başarısız'));
     } finally {
       setLoading(false);
     }
@@ -236,24 +412,24 @@ const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated })
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
-        <h3 className="text-xl font-bold mb-4">Yeni Grup Oluştur</h3>
+        <h3 className="text-xl font-bold mb-4">{t('createGroup')}</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="text"
-            placeholder="Grup adı"
+            placeholder={t('groupName')}
             value={formData.name}
             onChange={(e) => setFormData({...formData, name: e.target.value})}
             className="w-full p-3 border rounded-lg"
             required
           />
           <textarea
-            placeholder="Grup açıklaması (isteğe bağlı)"
+            placeholder={t('description')}
             value={formData.description}
             onChange={(e) => setFormData({...formData, description: e.target.value})}
             className="w-full p-3 border rounded-lg h-20"
           />
           <textarea
-            placeholder="Üye telefon numaraları (virgülle ayrılı): +905551234567, +905552345678"
+            placeholder={t('memberPhones')}
             value={formData.memberPhones}
             onChange={(e) => setFormData({...formData, memberPhones: e.target.value})}
             className="w-full p-3 border rounded-lg h-20"
@@ -265,7 +441,7 @@ const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated })
               onChange={(e) => setFormData({...formData, isPublic: e.target.checked})}
               className="mr-2"
             />
-            Herkese açık grup
+            {t('publicGroup')}
           </label>
           <div className="flex space-x-2">
             <button
@@ -273,14 +449,14 @@ const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated })
               disabled={loading}
               className="flex-1 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-400"
             >
-              {loading ? 'Oluşturuluyor...' : 'Grup Oluştur'}
+              {loading ? t('creating') : t('createGroup')}
             </button>
             <button
               type="button"
               onClick={onClose}
               className="flex-1 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
             >
-              İptal
+              {t('cancel')}
             </button>
           </div>
         </form>
@@ -289,7 +465,8 @@ const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated })
   );
 };
 
-const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreated }) => {
+const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreated, language = 'tr' }) => {
+  const t = (key) => getTranslation(key, language);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -313,12 +490,12 @@ const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreate
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      alert('Kanal başarıyla oluşturuldu!');
+      alert(language === 'en' ? 'Channel created successfully!' : 'Kanal başarıyla oluşturuldu!');
       onChannelCreated();
       onClose();
       setFormData({ name: '', description: '', isPublic: true, canSubscribersMessage: false });
     } catch (error) {
-      alert(error.response?.data?.detail || 'Kanal oluşturma başarısız');
+      alert(error.response?.data?.detail || (language === 'en' ? 'Channel creation failed' : 'Kanal oluşturma başarısız'));
     } finally {
       setLoading(false);
     }
@@ -329,18 +506,18 @@ const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreate
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
-        <h3 className="text-xl font-bold mb-4">Yeni Kanal Oluştur</h3>
+        <h3 className="text-xl font-bold mb-4">{t('createChannel')}</h3>
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="text"
-            placeholder="Kanal adı"
+            placeholder={t('channelName')}
             value={formData.name}
             onChange={(e) => setFormData({...formData, name: e.target.value})}
             className="w-full p-3 border rounded-lg"
             required
           />
           <textarea
-            placeholder="Kanal açıklaması (isteğe bağlı)"
+            placeholder={t('description')}
             value={formData.description}
             onChange={(e) => setFormData({...formData, description: e.target.value})}
             className="w-full p-3 border rounded-lg h-20"
@@ -352,7 +529,7 @@ const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreate
               onChange={(e) => setFormData({...formData, isPublic: e.target.checked})}
               className="mr-2"
             />
-            Herkese açık kanal
+            {t('publicChannel')}
           </label>
           <label className="flex items-center">
             <input
@@ -361,7 +538,7 @@ const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreate
               onChange={(e) => setFormData({...formData, canSubscribersMessage: e.target.checked})}
               className="mr-2"
             />
-            Abone olanlar mesaj gönderebilir
+            {t('subscribersCanMessage')}
           </label>
           <div className="flex space-x-2">
             <button
@@ -369,14 +546,14 @@ const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreate
               disabled={loading}
               className="flex-1 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400"
             >
-              {loading ? 'Oluşturuluyor...' : 'Kanal Oluştur'}
+              {loading ? t('creating') : t('createChannel')}
             </button>
             <button
               type="button"
               onClick={onClose}
               className="flex-1 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
             >
-              İptal
+              {t('cancel')}
             </button>
           </div>
         </form>
@@ -389,8 +566,10 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [showLanguageSettings, setShowLanguageSettings] = useState(false);
+  const [interfaceLanguage, setInterfaceLanguage] = useState('tr');
   const [activeTab, setActiveTab] = useState('whatsapp');
-  const [contentType, setContentType] = useState('contacts'); // 'contacts', 'groups', 'channels'
+  const [contentType, setContentType] = useState('contacts');
   const [contacts, setContacts] = useState([]);
   const [groups, setGroups] = useState([]);
   const [channels, setChannels] = useState([]);
@@ -413,14 +592,19 @@ const App = () => {
   const messagesEndRef = useRef(null);
   const ws = useRef(null);
 
+  // Translation helper
+  const t = (key, params) => getTranslation(key, interfaceLanguage, params);
+
   useEffect(() => {
     // Check for existing auth
     const savedToken = localStorage.getItem('whatgram_token');
     const savedUser = localStorage.getItem('whatgram_user');
     
     if (savedToken && savedUser) {
+      const userData = JSON.parse(savedUser);
       setToken(savedToken);
-      setUser(JSON.parse(savedUser));
+      setUser(userData);
+      setInterfaceLanguage(userData.interface_language || 'tr');
     } else {
       setShowAuth(true);
     }
@@ -479,6 +663,20 @@ const App = () => {
   const handleLogin = (accessToken, userData) => {
     setToken(accessToken);
     setUser(userData);
+    setInterfaceLanguage(userData.interface_language || 'tr');
+  };
+
+  const handleLanguageUpdated = (newSettings) => {
+    setInterfaceLanguage(newSettings.interfaceLanguage);
+    // Update user in local storage
+    const updatedUser = {
+      ...user,
+      interface_language: newSettings.interfaceLanguage,
+      preferred_language: newSettings.preferredLanguage,
+      auto_translate: newSettings.autoTranslate
+    };
+    setUser(updatedUser);
+    localStorage.setItem('whatgram_user', JSON.stringify(updatedUser));
   };
 
   const logout = () => {
@@ -554,7 +752,6 @@ const App = () => {
       let conversationId;
       
       if (type === 'contact') {
-        // Create or get conversation for contact
         const response = await axios.post(
           `${API}/conversations?participant_id=${item.id}&platform=${activeTab}`,
           {},
@@ -566,8 +763,6 @@ const App = () => {
         setSelectedGroup(null);
         setSelectedChannel(null);
       } else if (type === 'group' || type === 'channel') {
-        // Groups and channels already have conversations
-        // Find the conversation by group_id or channel_id
         const response = await axios.get(`${API}/conversations?platform=${activeTab}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -604,7 +799,7 @@ const App = () => {
         `${API}/messages`,
         {
           conversation_id: currentChat.conversationId,
-          receiver_id: selectedContact ? selectedContact.id : "", // Groups/channels don't need receiver_id
+          receiver_id: selectedContact ? selectedContact.id : "",
           content: newMessage,
           platform: activeTab
         },
@@ -659,7 +854,7 @@ const App = () => {
       loadMessages();
     } catch (error) {
       console.error('Error uploading files:', error);
-      alert('Dosya yükleme başarısız!');
+      alert(t('uploadFailed'));
     } finally {
       setIsUploading(false);
     }
@@ -692,7 +887,7 @@ const App = () => {
   };
 
   const formatTime = (timestamp) => {
-    return new Date(timestamp).toLocaleTimeString('tr-TR', {
+    return new Date(timestamp).toLocaleTimeString(interfaceLanguage === 'en' ? 'en-US' : 'tr-TR', {
       hour: '2-digit',
       minute: '2-digit'
     });
@@ -751,23 +946,23 @@ const App = () => {
         name: selectedContact.name,
         subtitle: selectedContact.phone,
         avatar: selectedContact.avatar_url,
-        type: 'Kişi',
+        type: t('contacts'),
         isOnline: selectedContact.is_online
       };
     } else if (selectedGroup) {
       return {
         name: selectedGroup.name,
-        subtitle: `${selectedGroup.member_count} üye`,
+        subtitle: `${selectedGroup.member_count} ${t('members')}`,
         avatar: selectedGroup.avatar_url || 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=100&h=100&fit=crop',
-        type: 'Grup',
+        type: t('groups'),
         isOnline: false
       };
     } else if (selectedChannel) {
       return {
         name: selectedChannel.name,
-        subtitle: `${selectedChannel.subscriber_count} abone`,
+        subtitle: `${selectedChannel.subscriber_count} ${t('subscribers')}`,
         avatar: selectedChannel.avatar_url || 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=100&h=100&fit=crop',
-        type: 'Kanal',
+        type: t('channels'),
         isOnline: false
       };
     }
@@ -778,21 +973,34 @@ const App = () => {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-400 flex items-center justify-center">
         <div className="text-center text-white">
-          <h1 className="text-6xl font-bold mb-4" data-testid="app-title">WhatGram</h1>
-          <p className="text-xl mb-2">WhatsApp, Telegram ve WhatGram'ı birleştiren platform</p>
-          <p className="text-lg mb-8 opacity-90">📱 Telefon numaranızla hızlıca başlayın</p>
+          {/* Language Selector */}
+          <div className="absolute top-4 right-4">
+            <select
+              value={interfaceLanguage}
+              onChange={(e) => setInterfaceLanguage(e.target.value)}
+              className="bg-white bg-opacity-20 text-white rounded-lg px-3 py-1 text-sm border-none outline-none"
+            >
+              <option value="tr" className="text-gray-800">🇹🇷 Türkçe</option>
+              <option value="en" className="text-gray-800">🇺🇸 English</option>
+            </select>
+          </div>
+          
+          <h1 className="text-6xl font-bold mb-4" data-testid="app-title">{t('appName')}</h1>
+          <p className="text-xl mb-2">{t('appSubtitle')}</p>
+          <p className="text-lg mb-8 opacity-90">📱 {interfaceLanguage === 'en' ? 'Start quickly with your phone number' : 'Telefon numaranızla hızlıca başlayın'}</p>
           <button
             onClick={() => setShowAuth(true)}
             className="px-8 py-4 bg-white text-purple-600 rounded-lg font-semibold hover:bg-gray-100 transition-colors text-lg"
             data-testid="get-started-btn"
           >
-            Telefon ile Giriş Yap
+            {t('getStarted')}
           </button>
         </div>
         <PhoneAuthModal 
           isOpen={showAuth} 
           onClose={() => setShowAuth(false)}
           onLogin={handleLogin}
+          language={interfaceLanguage}
         />
       </div>
     );
@@ -807,14 +1015,23 @@ const App = () => {
         {/* Header */}
         <div className="p-4 bg-gradient-to-r from-purple-500 to-blue-500 text-white">
           <div className="flex items-center justify-between mb-2">
-            <h1 className="text-xl font-bold" data-testid="whatgram-header">WhatGram</h1>
-            <button
-              onClick={logout}
-              className="px-3 py-1 bg-white bg-opacity-20 rounded-full text-sm hover:bg-opacity-30"
-              data-testid="logout-btn"
-            >
-              Çıkış
-            </button>
+            <h1 className="text-xl font-bold" data-testid="whatgram-header">{t('appName')}</h1>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setShowLanguageSettings(true)}
+                className="px-2 py-1 bg-white bg-opacity-20 rounded-full text-sm hover:bg-opacity-30"
+                title={t('languageSettings')}
+              >
+                🌍
+              </button>
+              <button
+                onClick={logout}
+                className="px-3 py-1 bg-white bg-opacity-20 rounded-full text-sm hover:bg-opacity-30"
+                data-testid="logout-btn"
+              >
+                {t('logout')}
+              </button>
+            </div>
           </div>
           <p className="text-sm opacity-90">📱 {user.phone}</p>
           <p className="text-xs opacity-75">{user.username}</p>
@@ -832,7 +1049,7 @@ const App = () => {
             data-testid="whatsapp-tab"
           >
             <span>📱</span>
-            <span>WhatsApp</span>
+            <span>{t('whatsapp')}</span>
             {!connectionStatus.whatsapp && (
               <span 
                 className="w-2 h-2 bg-red-500 rounded-full cursor-pointer"
@@ -840,7 +1057,7 @@ const App = () => {
                   e.stopPropagation();
                   connectPlatform('whatsapp');
                 }}
-                title="Bağlan"
+                title={t('connect')}
               ></span>
             )}
           </button>
@@ -854,7 +1071,7 @@ const App = () => {
             data-testid="telegram-tab"
           >
             <span>✈️</span>
-            <span>Telegram</span>
+            <span>{t('telegram')}</span>
             {!connectionStatus.telegram && (
               <span 
                 className="w-2 h-2 bg-red-500 rounded-full cursor-pointer"
@@ -862,7 +1079,7 @@ const App = () => {
                   e.stopPropagation();
                   connectPlatform('telegram');
                 }}
-                title="Bağlan"
+                title={t('connect')}
               ></span>
             )}
           </button>
@@ -876,8 +1093,8 @@ const App = () => {
             data-testid="whatgram-tab"
           >
             <span>💬</span>
-            <span>WhatGram</span>
-            <span className="w-2 h-2 bg-green-500 rounded-full" title="Bağlı"></span>
+            <span>{t('whatgram')}</span>
+            <span className="w-2 h-2 bg-green-500 rounded-full" title={t('connected')}></span>
           </button>
         </div>
 
@@ -897,7 +1114,7 @@ const App = () => {
             }`}
             data-testid="contacts-tab"
           >
-            👥 Kişiler
+            👥 {t('contacts')}
           </button>
           <button
             onClick={() => {
@@ -913,7 +1130,7 @@ const App = () => {
             }`}
             data-testid="groups-tab"
           >
-            👥 Gruplar
+            👥 {t('groups')}
           </button>
           <button
             onClick={() => {
@@ -929,7 +1146,7 @@ const App = () => {
             }`}
             data-testid="channels-tab"
           >
-            📢 Kanallar
+            📢 {t('channels')}
           </button>
         </div>
 
@@ -944,7 +1161,7 @@ const App = () => {
                   className={`w-full py-2 px-4 ${getPlatformColor(activeTab)} text-white rounded-lg hover:opacity-80 text-sm`}
                   data-testid="create-group-btn"
                 >
-                  + Yeni Grup Oluştur
+                  + {t('createGroup')}
                 </button>
               )}
               {contentType === 'channels' && (
@@ -953,16 +1170,16 @@ const App = () => {
                   className={`w-full py-2 px-4 ${getPlatformColor(activeTab)} text-white rounded-lg hover:opacity-80 text-sm`}
                   data-testid="create-channel-btn"
                 >
-                  + Yeni Kanal Oluştur
+                  + {t('createChannel')}
                 </button>
               )}
             </div>
 
             {/* Title */}
             <h3 className="text-lg font-semibold mb-3" data-testid="content-title">
-              {contentType === 'contacts' && `Kişiler (${contacts.length})`}
-              {contentType === 'groups' && `Gruplar (${groups.length})`}
-              {contentType === 'channels' && `Kanallar (${channels.length})`}
+              {contentType === 'contacts' && `${t('contacts')} (${contacts.length})`}
+              {contentType === 'groups' && `${t('groups')} (${groups.length})`}
+              {contentType === 'channels' && `${t('channels')} (${channels.length})`}
             </h3>
 
             {/* List */}
@@ -1016,10 +1233,10 @@ const App = () => {
                   </div>
                   <div className="ml-3 flex-1 min-w-0">
                     <p className="font-medium text-gray-900 truncate">{group.name}</p>
-                    <p className="text-sm text-gray-500 truncate">{group.member_count} üye</p>
+                    <p className="text-sm text-gray-500 truncate">{group.member_count} {t('members')}</p>
                   </div>
                   <div className="text-right">
-                    <span className="text-xs text-gray-400">Grup</span>
+                    <span className="text-xs text-gray-400">{t('groups')}</span>
                     <div className={`w-3 h-3 rounded-full ${getPlatformColor(group.platform)} mt-1`}></div>
                   </div>
                 </div>
@@ -1045,10 +1262,10 @@ const App = () => {
                   </div>
                   <div className="ml-3 flex-1 min-w-0">
                     <p className="font-medium text-gray-900 truncate">{channel.name}</p>
-                    <p className="text-sm text-gray-500 truncate">{channel.subscriber_count} abone</p>
+                    <p className="text-sm text-gray-500 truncate">{channel.subscriber_count} {t('subscribers')}</p>
                   </div>
                   <div className="text-right">
-                    <span className="text-xs text-gray-400">Kanal</span>
+                    <span className="text-xs text-gray-400">{t('channels')}</span>
                     <div className={`w-3 h-3 rounded-full ${getPlatformColor(channel.platform)} mt-1`}></div>
                   </div>
                 </div>
@@ -1076,14 +1293,14 @@ const App = () => {
                   </h4>
                   <p className="text-sm opacity-75">
                     {currentChatInfo.subtitle} • {currentChatInfo.type}
-                    {activeTab === 'whatgram' && <span className="ml-2">🔒 E2E Şifreli</span>}
+                    {activeTab === 'whatgram' && <span className="ml-2">🔒 {t('encrypted')}</span>}
                   </p>
                 </div>
               </div>
               <div className="text-right">
-                <p className="text-sm opacity-75 capitalize">{activeTab}</p>
+                <p className="text-sm opacity-75 capitalize">{t(activeTab)}</p>
                 {activeTab === 'whatgram' && (
-                  <p className="text-xs opacity-60">Sınırsız Dosya</p>
+                  <p className="text-xs opacity-60">{t('unlimited')}</p>
                 )}
               </div>
             </div>
@@ -1116,7 +1333,21 @@ const App = () => {
                       </div>
                     ) : (
                       <>
-                        <p className="text-sm">{message.content}</p>
+                        <p className="text-sm">
+                          {user.auto_translate && message.translations && message.translations[user.preferred_language] 
+                            ? message.translations[user.preferred_language] 
+                            : message.content}
+                        </p>
+                        
+                        {/* Translation Component */}
+                        {message.sender_id !== user.id && (
+                          <MessageTranslation 
+                            message={message} 
+                            userLanguage={user.preferred_language || 'tr'} 
+                            token={token} 
+                          />
+                        )}
+                        
                         <div className="flex justify-between items-center mt-1">
                           <p className={`text-xs ${
                             message.sender_id === user.id ? 'text-white opacity-75' : 'text-gray-500'
@@ -1140,8 +1371,8 @@ const App = () => {
               <div className="p-4 border-t border-gray-200 bg-gray-50">
                 <div className="space-y-2">
                   <h5 className="text-sm font-medium flex items-center">
-                    📎 Seçilen Dosyalar:
-                    {activeTab === 'whatgram' && <span className="ml-2 text-purple-600 text-xs">🔒 Şifreli</span>}
+                    📎 {t('selectFiles')}
+                    {activeTab === 'whatgram' && <span className="ml-2 text-purple-600 text-xs">🔒 {t('encrypted')}</span>}
                   </h5>
                   {selectedFiles.map((file, index) => (
                     <div key={index} className="flex items-center justify-between p-2 bg-white rounded border">
@@ -1166,14 +1397,14 @@ const App = () => {
                       }`}
                       data-testid="upload-files-btn"
                     >
-                      {isUploading ? 'Yükleniyor...' : 'Dosyaları Gönder'}
+                      {isUploading ? t('uploading') : t('uploadFiles')}
                       {activeTab === 'whatgram' && <span className="ml-1">🔒</span>}
                     </button>
                     <button
                       onClick={() => setSelectedFiles([])}
                       className="px-4 py-2 bg-gray-300 hover:bg-gray-400 text-gray-700 rounded text-sm"
                     >
-                      İptal
+                      {t('cancel')}
                     </button>
                   </div>
                 </div>
@@ -1200,7 +1431,7 @@ const App = () => {
                   onClick={() => fileInputRef.current?.click()}
                   className={`p-2 rounded-full ${getPlatformColor(activeTab)} hover:opacity-80 text-white transition-opacity`}
                   data-testid="file-upload-btn"
-                  title="Dosya ekle"
+                  title={interfaceLanguage === 'en' ? 'Add file' : 'Dosya ekle'}
                 >
                   📎
                 </button>
@@ -1209,7 +1440,7 @@ const App = () => {
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                  placeholder={`${currentChatInfo.type.toLowerCase()}'a mesaj yazın...`}
+                  placeholder={t('messageInputPlaceholder', { type: currentChatInfo.type.toLowerCase() })}
                   className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
                   data-testid="message-input"
                 />
@@ -1227,9 +1458,9 @@ const App = () => {
                 </button>
               </div>
               <p className="text-xs text-gray-500 mt-2 text-center">
-                {activeTab === 'whatgram' && '🔒 Uçtan uca şifreli • '}
-                Dosya sürükleyip bırakın veya 📎 butonuna tıklayarak dosya seçin
-                {activeTab === 'whatgram' && ' • Sınırsız dosya boyutu desteklenir'}
+                {activeTab === 'whatgram' && `🔒 ${t('encrypted')} • `}
+                {t('dragDrop')}
+                {activeTab === 'whatgram' && ` • ${t('unlimitedFiles')}`}
               </p>
             </div>
           </>
@@ -1241,24 +1472,24 @@ const App = () => {
                 {contentType === 'groups' && '👥'}
                 {contentType === 'channels' && '📢'}
               </div>
-              <h3 className="text-xl font-medium mb-2">WhatGram ile Başlayın</h3>
+              <h3 className="text-xl font-medium mb-2">{t('welcomeTitle')}</h3>
               <p className="mb-4">
-                {contentType === 'contacts' && 'Bir kişi seçerek mesajlaşmaya başlayın'}
-                {contentType === 'groups' && 'Bir grup seçin veya yeni grup oluşturun'}
-                {contentType === 'channels' && 'Bir kanal seçin veya yeni kanal oluşturun'}
+                {contentType === 'contacts' && t('selectContact')}
+                {contentType === 'groups' && t('selectGroup')}
+                {contentType === 'channels' && t('selectChannel')}
               </p>
               <div className="space-y-2 text-sm">
                 <p className="flex items-center justify-center">
                   <span className="inline-block w-3 h-3 bg-green-500 rounded-full mr-2"></span>
-                  📱 WhatsApp - Klasik mesajlaşma
+                  📱 {t('whatsapp')} - {t('classicMessaging')}
                 </p>
                 <p className="flex items-center justify-center">
                   <span className="inline-block w-3 h-3 bg-blue-500 rounded-full mr-2"></span>
-                  ✈️ Telegram - Gelişmiş özellikler
+                  ✈️ {t('telegram')} - {t('advancedFeatures')}
                 </p>
                 <p className="flex items-center justify-center">
                   <span className="inline-block w-3 h-3 bg-purple-500 rounded-full mr-2"></span>
-                  💬 WhatGram - Sınırsız dosya & E2E şifreleme
+                  💬 {t('whatgram')} - {t('unlimitedE2E')}
                 </p>
               </div>
             </div>
@@ -1273,6 +1504,7 @@ const App = () => {
         activeTab={activeTab}
         token={token}
         onGroupCreated={loadContent}
+        language={interfaceLanguage}
       />
 
       <CreateChannelModal
@@ -1281,6 +1513,15 @@ const App = () => {
         activeTab={activeTab}
         token={token}
         onChannelCreated={loadContent}
+        language={interfaceLanguage}
+      />
+
+      <LanguageSettingsModal
+        isOpen={showLanguageSettings}
+        onClose={() => setShowLanguageSettings(false)}
+        currentUser={user}
+        token={token}
+        onLanguageUpdated={handleLanguageUpdated}
       />
     </div>
   );
