@@ -265,7 +265,7 @@ async def main():
         
         if otp_requested:
             # Try common OTP codes or ask user
-            otp_codes_to_try = ["798245", "123456", "000000", "111111"]
+            otp_codes_to_try = ["183732", "123456", "000000", "111111"]
             
             print(f"\n🔐 Attempting OTP verification...")
             print("Note: Check backend logs for the actual OTP code if these fail")
