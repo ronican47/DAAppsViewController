@@ -258,6 +258,28 @@ class MessageCreate(BaseModel):
     message_type: str = "text"
 
 
+class GroupCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    platform: Platform
+    is_public: bool = False
+    member_phones: List[str] = []  # Phone numbers to add as members
+
+
+class ChannelCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    platform: Platform
+    is_public: bool = True
+    can_subscribers_message: bool = False
+
+
+class GroupMemberAction(BaseModel):
+    group_id: str
+    user_phone: str
+    action: str  # "add", "remove", "promote", "demote"
+
+
 # Utility functions
 def normalize_phone(phone: str) -> str:
     """Normalize phone number format"""
