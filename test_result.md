@@ -285,10 +285,11 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Emergent LLM Key Integration (Translation)"
-    - "Emergent LLM Key Integration (Whisper STT)"
     - "React Native + Expo Project Setup"
-    - "Unified Inbox API Endpoint"
+    - "Authentication Screens (Phone + OTP)"
+    - "Unified Inbox UI"
+    - "Platform Tabs (WhatsApp/Telegram/WhatGram)"
+    - "Messaging Interface"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
