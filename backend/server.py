@@ -124,6 +124,11 @@ class User(BaseModel):
     telegram_connected: bool = False
     whatsapp_session: Optional[str] = None
     telegram_session: Optional[str] = None
+    
+    # Language settings
+    preferred_language: str = "tr"  # tr, en, de, fr, es, etc.
+    auto_translate: bool = True
+    interface_language: str = "tr"
 
 
 class PhoneVerification(BaseModel):
