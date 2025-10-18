@@ -2,6 +2,7 @@ from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Form, D
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.encoders import jsonable_encoder
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -21,6 +22,7 @@ from cryptography.fernet import Fernet
 import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
 import json
+from bson import ObjectId
 
 
 ROOT_DIR = Path(__file__).parent
