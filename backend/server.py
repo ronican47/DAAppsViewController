@@ -293,6 +293,7 @@ async def register(user_data: UserCreate):
     
     user_dict = user.dict()
     user_dict.pop('hashed_password')  # Don't send password
+    user_dict.pop('_id', None)  # Remove MongoDB ObjectId
     
     return {
         "access_token": access_token,
