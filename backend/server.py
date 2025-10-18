@@ -314,6 +314,7 @@ async def login(user_credentials: UserLogin):
     
     user_dict = user.copy()
     user_dict.pop('hashed_password')  # Don't send password
+    user_dict.pop('_id', None)  # Remove MongoDB ObjectId
     
     return {
         "access_token": access_token,
