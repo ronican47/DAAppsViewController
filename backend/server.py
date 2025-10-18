@@ -699,6 +699,33 @@ async def send_message(
     message_dict = message.dict()
     message_dict["sender_id"] = current_user.id
     
+    # Add translation support
+    if message.content:
+        # Detect original language
+        detected_lang = detect_language(message.content)
+        message_dict["auto_detected_language"] = detected_lang
+        message_dict["original_language"] = detected_lang
+        
+        # Get languages of conversation participants for translations
+        participant_users = []
+        for participant_id in conversation["participant_ids"]:
+            if participant_id != current_user.id:
+                user = await db.users.find_one({"id": participant_id})
+                if user:
+                    participant_users.append(user)
+        
+        # Generate translations for participants who have auto_translate enabled
+        translations = {}
+        for participant in participant_users:
+            if participant.get("auto_translate", True) and participant.get("preferred_language", "tr") != detected_lang:
+                target_lang = participant.get("preferred_language", "tr")
+                translation_result = await translate_text(message.content, target_lang, detected_lang)
+                translations[target_lang] = translation_result["translated_text"]
+        
+        # Always include original language
+        translations[detected_lang] = message.content
+        message_dict["translations"] = translations
+    
     # Encrypt content for WhatGram platform
     if message.platform == Platform.WHATGRAM and message.content:
         message_dict["encrypted_content"] = encrypt_message(message.content)
@@ -719,16 +746,29 @@ async def send_message(
         }
     )
     
-    # Send real-time notification
+    # Send real-time notification with translations
     try:
-        await manager.send_personal_message(
-            json.dumps({
-                "type": "new_message",
-                "message": message_obj.dict(),
-                "conversation_id": message.conversation_id
-            }),
-            message.receiver_id
-        )
+        # Notify each participant with their preferred language translation
+        for participant_id in conversation["participant_ids"]:
+            if participant_id != current_user.id:
+                participant = await db.users.find_one({"id": participant_id})
+                if participant:
+                    # Get translation for this user's preferred language
+                    user_lang = participant.get("preferred_language", "tr")
+                    translated_content = message_dict.get("translations", {}).get(user_lang, message.content)
+                    
+                    notification_message = message_obj.dict()
+                    notification_message["content"] = translated_content
+                    
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "new_message",
+                            "message": notification_message,
+                            "conversation_id": message.conversation_id,
+                            "translated_for": user_lang
+                        }),
+                        participant_id
+                    )
     except:
         pass
     
