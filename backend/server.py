@@ -61,37 +61,14 @@ async def translate_text(text: str, target_language: str, source_language: str =
         result = await translation_service.translate_text(text, target_language, source_language)
         return result
     except Exception as e:
-        print(f"LLM Translation error: {e}, falling back to googletrans")
-        # Fallback to old translator if LLM fails
-        try:
-            if source_language is None:
-                source_language = detect_language(text)
-            
-            # Don't translate if source and target are the same
-            if source_language == target_language:
-                return {
-                    'translated_text': text,
-                    'source_language': source_language,
-                    'target_language': target_language,
-                    'confidence': 1.0
-                }
-            
-            result = translator.translate(text, dest=target_language, src=source_language)
-            
-            return {
-                'translated_text': result.text,
-                'source_language': result.src,
-                'target_language': target_language,
-                'confidence': getattr(result, 'confidence', 0.8) or 0.8
-            }
-        except Exception as e2:
-            print(f"Fallback translation error: {e2}")
-            return {
-                'translated_text': text,  # Return original if translation fails
-                'source_language': source_language or 'en',
-                'target_language': target_language,
-                'confidence': 0.0
-            }
+        print(f"LLM Translation error: {e}")
+        # Return original text if translation fails
+        return {
+            'translated_text': text,
+            'source_language': source_language or 'en',
+            'target_language': target_language,
+            'confidence': 0.0
+        }
 
 async def get_message_translations(message_content: str, user_languages: List[str]) -> Dict[str, str]:
     """Get translations for message in multiple languages"""
