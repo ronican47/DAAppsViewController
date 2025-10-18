@@ -1204,6 +1204,175 @@ async def update_user_language_settings(
     return {"message": "Language settings updated successfully"}
 
 
+# Unified Inbox Routes
+@api_router.get("/unified-inbox")
+async def get_unified_inbox(
+    limit: int = 50,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get unified inbox with all messages from all platforms sorted chronologically"""
+    
+    # Get all conversations where user is participant
+    user_conversations = await db.conversations.find({
+        "participant_ids": current_user.id
+    }).to_list(1000)
+    
+    conversation_ids = [conv["id"] for conv in user_conversations]
+    
+    # Get recent messages from all conversations
+    messages = await db.messages.find({
+        "conversation_id": {"$in": conversation_ids}
+    }).sort("timestamp", -1).skip(offset).limit(limit).to_list(limit)
+    
+    # Enrich messages with conversation and contact info
+    enriched_messages = []
+    for msg in messages:
+        msg.pop("_id", None)
+        message_obj = Message(**msg)
+        
+        # Get conversation info
+        conversation = next((conv for conv in user_conversations if conv["id"] == msg["conversation_id"]), None)
+        if not conversation:
+            continue
+            
+        # Decrypt WhatGram messages if needed
+        if message_obj.encrypted_content and message_obj.platform == Platform.WHATGRAM:
+            try:
+                message_obj.content = decrypt_message(message_obj.encrypted_content)
+            except:
+                pass
+        
+        # Get contact/group/channel info
+        sender_info = None
+        chat_info = None
+        
+        if message_obj.sender_id != current_user.id:
+            # Get sender contact info
+            sender_contact = await db.contacts.find_one({"id": message_obj.sender_id})
+            if sender_contact:
+                sender_contact.pop("_id", None)
+                sender_info = Contact(**sender_contact)
+        
+        # Get chat info (individual, group, or channel)
+        if conversation.get("group_id"):
+            group = await db.groups.find_one({"id": conversation["group_id"]})
+            if group:
+                group.pop("_id", None)
+                chat_info = {
+                    "type": "group",
+                    "name": group["name"],
+                    "avatar_url": group.get("avatar_url"),
+                    "member_count": group.get("member_count", 0)
+                }
+        elif conversation.get("channel_id"):
+            channel = await db.channels.find_one({"id": conversation["channel_id"]})
+            if channel:
+                channel.pop("_id", None)
+                chat_info = {
+                    "type": "channel",
+                    "name": channel["name"],
+                    "avatar_url": channel.get("avatar_url"),
+                    "subscriber_count": channel.get("subscriber_count", 0)
+                }
+        else:
+            # Individual chat
+            other_participant_id = next((pid for pid in conversation["participant_ids"] if pid != current_user.id), None)
+            if other_participant_id:
+                contact = await db.contacts.find_one({"id": other_participant_id})
+                if contact:
+                    contact.pop("_id", None)
+                    chat_info = {
+                        "type": "contact",
+                        "name": contact["name"],
+                        "avatar_url": contact.get("avatar_url"),
+                        "phone": contact["phone"]
+                    }
+        
+        # Apply translation for user's preferred language
+        display_content = message_obj.content
+        if (message_obj.translations and 
+            current_user.preferred_language in message_obj.translations and
+            current_user.auto_translate):
+            display_content = message_obj.translations[current_user.preferred_language]
+        
+        enriched_message = {
+            "id": message_obj.id,
+            "content": display_content,
+            "original_content": message_obj.content,
+            "file_message": message_obj.file_message,
+            "platform": message_obj.platform.value,
+            "timestamp": message_obj.timestamp,
+            "message_type": message_obj.message_type,
+            "is_sent": message_obj.sender_id == current_user.id,
+            "sender_info": sender_info.dict() if sender_info else None,
+            "chat_info": chat_info,
+            "conversation_id": message_obj.conversation_id,
+            "auto_detected_language": message_obj.auto_detected_language,
+            "has_translation": bool(message_obj.translations and current_user.preferred_language in message_obj.translations)
+        }
+        
+        enriched_messages.append(enriched_message)
+    
+    return {
+        "messages": enriched_messages,
+        "total": len(enriched_messages),
+        "offset": offset,
+        "limit": limit,
+        "user_language": current_user.preferred_language
+    }
+
+
+@api_router.get("/inbox-stats")
+async def get_inbox_stats(
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get inbox statistics for dashboard"""
+    
+    # Get all user conversations
+    user_conversations = await db.conversations.find({
+        "participant_ids": current_user.id
+    }).to_list(1000)
+    
+    conversation_ids = [conv["id"] for conv in user_conversations]
+    
+    # Count messages by platform
+    pipeline = [
+        {"$match": {"conversation_id": {"$in": conversation_ids}}},
+        {"$group": {
+            "_id": "$platform", 
+            "count": {"$sum": 1},
+            "latest": {"$max": "$timestamp"}
+        }}
+    ]
+    
+    platform_stats = await db.messages.aggregate(pipeline).to_list(100)
+    
+    # Count unread messages (simplified - all recent messages)
+    recent_messages = await db.messages.count_documents({
+        "conversation_id": {"$in": conversation_ids},
+        "sender_id": {"$ne": current_user.id},
+        "timestamp": {"$gte": datetime.utcnow() - timedelta(hours=24)}
+    })
+    
+    # Count by chat type
+    individual_chats = len([conv for conv in user_conversations if conv.get("conversation_type") == "private"])
+    group_chats = len([conv for conv in user_conversations if conv.get("conversation_type") == "group"])
+    channel_chats = len([conv for conv in user_conversations if conv.get("conversation_type") == "channel"])
+    
+    return {
+        "platform_stats": platform_stats,
+        "unread_count": recent_messages,
+        "chat_counts": {
+            "individual": individual_chats,
+            "groups": group_chats,
+            "channels": channel_chats,
+            "total": len(user_conversations)
+        },
+        "supported_platforms": ["whatsapp", "telegram", "whatgram"]
+    }
+
+
 # WebSocket endpoint
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
