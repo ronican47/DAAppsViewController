@@ -24,6 +24,9 @@ from fastapi import WebSocket, WebSocketDisconnect
 import json
 from bson import ObjectId
 import random
+import aiohttp
+from googletrans import Translator
+import langdetect
 
 
 ROOT_DIR = Path(__file__).parent
