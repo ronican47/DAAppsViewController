@@ -413,6 +413,8 @@ async def get_conversation_messages(
     # Decrypt messages if encrypted
     decrypted_messages = []
     for msg in messages:
+        # Remove MongoDB ObjectId
+        msg.pop("_id", None)
         message_obj = Message(**msg)
         if message_obj.encrypted_content and message_obj.platform == Platform.WHATGRAM:
             try:
