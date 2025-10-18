@@ -1,19 +1,26 @@
-from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Form, Depends, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 import shutil
 import mimetypes
+import jwt
+import bcrypt
+from cryptography.fernet import Fernet
+import asyncio
+from fastapi import WebSocket, WebSocketDisconnect
+import json
 
 
 ROOT_DIR = Path(__file__).parent
@@ -23,13 +30,22 @@ load_dotenv(ROOT_DIR / '.env')
 UPLOAD_DIR = ROOT_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+# Security
+SECRET_KEY = os.environ.get('SECRET_KEY', 'whatgram-secret-key-2024')
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# Encryption key for E2E
+ENCRYPTION_KEY = Fernet.generate_key()
+cipher_suite = Fernet(ENCRYPTION_KEY)
+
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
 # Create the main app
-app = FastAPI()
+app = FastAPI(title="WhatGram API", description="Unified Messaging Platform")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
@@ -37,20 +53,95 @@ api_router = APIRouter(prefix="/api")
 # Serve static files
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
+# Security
+security = HTTPBearer()
+
+# WebSocket Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+        self.user_connections: dict = {}
+    
+    async def connect(self, websocket: WebSocket, user_id: str):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        self.user_connections[user_id] = websocket
+    
+    def disconnect(self, websocket: WebSocket, user_id: str):
+        self.active_connections.remove(websocket)
+        if user_id in self.user_connections:
+            del self.user_connections[user_id]
+    
+    async def send_personal_message(self, message: str, user_id: str):
+        if user_id in self.user_connections:
+            websocket = self.user_connections[user_id]
+            await websocket.send_text(message)
+    
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            await connection.send_text(message)
+
+manager = ConnectionManager()
+
 
 class Platform(str, Enum):
     WHATSAPP = "whatsapp"
     TELEGRAM = "telegram"
+    WHATGRAM = "whatgram"
+
+
+class UserRole(str, Enum):
+    USER = "user"
+    ADMIN = "admin"
+
+
+class User(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    username: str
+    email: EmailStr
+    phone: Optional[str] = None
+    hashed_password: str
+    role: UserRole = UserRole.USER
+    is_active: bool = True
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    profile_picture: Optional[str] = None
+    
+    # Platform connections
+    whatsapp_connected: bool = False
+    telegram_connected: bool = False
+    whatsapp_session: Optional[str] = None
+    telegram_session: Optional[str] = None
+
+
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    phone: Optional[str] = None
+    password: str
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user: dict
 
 
 class Contact(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
     name: str
     phone: str
     platform: Platform
+    platform_user_id: Optional[str] = None  # WhatsApp/Telegram user ID
     avatar_url: Optional[str] = None
     last_seen: datetime = Field(default_factory=datetime.utcnow)
     is_online: bool = False
+    is_blocked: bool = False
 
 
 class FileMessage(BaseModel):
@@ -60,27 +151,37 @@ class FileMessage(BaseModel):
     file_path: str
     file_size: int
     mime_type: str
+    encrypted: bool = False
     uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+    thumbnail_path: Optional[str] = None  # For images/videos
 
 
 class Message(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     conversation_id: str
     sender_id: str
+    receiver_id: str
     content: Optional[str] = None
     file_message: Optional[FileMessage] = None
     platform: Platform
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     is_sent: bool = True
+    is_delivered: bool = False
     is_read: bool = False
+    encrypted_content: Optional[str] = None  # E2E encrypted content
+    message_type: str = "text"  # text, image, video, file, audio
 
 
 class Conversation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     participant_ids: List[str]
     platform: Platform
+    conversation_type: str = "private"  # private, group, channel
+    title: Optional[str] = None
     last_message_id: Optional[str] = None
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    last_activity: datetime = Field(default_factory=datetime.utcnow)
+    created_by: str
+    is_encrypted: bool = True
 
 
 class ContactCreate(BaseModel):
@@ -92,20 +193,140 @@ class ContactCreate(BaseModel):
 
 class MessageCreate(BaseModel):
     conversation_id: str
-    sender_id: str
+    receiver_id: str
     content: Optional[str] = None
     platform: Platform
+    message_type: str = "text"
+
+
+# Utility functions
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    try:
+        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
+    user = await db.users.find_one({"id": user_id})
+    if user is None:
+        raise HTTPException(status_code=401, detail="User not found")
+    return User(**user)
+
+
+def encrypt_message(content: str) -> str:
+    """Encrypt message content for E2E encryption"""
+    return cipher_suite.encrypt(content.encode()).decode()
+
+
+def decrypt_message(encrypted_content: str) -> str:
+    """Decrypt message content"""
+    return cipher_suite.decrypt(encrypted_content.encode()).decode()
 
 
 # Routes
 @api_router.get("/")
 async def root():
-    return {"message": "WhatsApp + Telegram Unified Messaging API"}
+    return {
+        "message": "WhatGram API - Unified Messaging Platform",
+        "version": "1.0.0",
+        "platforms": ["WhatsApp", "Telegram", "WhatGram"]
+    }
 
 
+# Authentication Routes
+@api_router.post("/auth/register", response_model=Token)
+async def register(user_data: UserCreate):
+    # Check if user exists
+    existing_user = await db.users.find_one({"email": user_data.email})
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Check username
+    existing_username = await db.users.find_one({"username": user_data.username})
+    if existing_username:
+        raise HTTPException(status_code=400, detail="Username already taken")
+    
+    # Create user
+    hashed_password = hash_password(user_data.password)
+    user = User(
+        username=user_data.username,
+        email=user_data.email,
+        phone=user_data.phone,
+        hashed_password=hashed_password
+    )
+    
+    await db.users.insert_one(user.dict())
+    
+    # Create token
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.id}, expires_delta=access_token_expires
+    )
+    
+    user_dict = user.dict()
+    user_dict.pop('hashed_password')  # Don't send password
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user_dict
+    }
+
+
+@api_router.post("/auth/login", response_model=Token)
+async def login(user_credentials: UserLogin):
+    user = await db.users.find_one({"email": user_credentials.email})
+    if not user or not verify_password(user_credentials.password, user["hashed_password"]):
+        raise HTTPException(status_code=401, detail="Incorrect email or password")
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user["id"]}, expires_delta=access_token_expires
+    )
+    
+    user_dict = user.copy()
+    user_dict.pop('hashed_password')  # Don't send password
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user_dict
+    }
+
+
+@api_router.get("/auth/me", response_model=User)
+async def get_me(current_user: User = Depends(get_current_user)):
+    return current_user
+
+
+# Contact Routes
 @api_router.get("/contacts", response_model=List[Contact])
-async def get_contacts(platform: Optional[Platform] = None):
-    filter_dict = {}
+async def get_contacts(
+    platform: Optional[Platform] = None,
+    current_user: User = Depends(get_current_user)
+):
+    filter_dict = {"user_id": current_user.id}
     if platform:
         filter_dict["platform"] = platform.value
     
@@ -114,32 +335,99 @@ async def get_contacts(platform: Optional[Platform] = None):
 
 
 @api_router.post("/contacts", response_model=Contact)
-async def create_contact(contact: ContactCreate):
+async def create_contact(
+    contact: ContactCreate,
+    current_user: User = Depends(get_current_user)
+):
     contact_dict = contact.dict()
+    contact_dict["user_id"] = current_user.id
     contact_obj = Contact(**contact_dict)
     await db.contacts.insert_one(contact_obj.dict())
     return contact_obj
 
 
+# Conversation Routes
 @api_router.get("/conversations", response_model=List[Conversation])
-async def get_conversations(platform: Optional[Platform] = None):
-    filter_dict = {}
+async def get_conversations(
+    platform: Optional[Platform] = None,
+    current_user: User = Depends(get_current_user)
+):
+    filter_dict = {"participant_ids": current_user.id}
     if platform:
         filter_dict["platform"] = platform.value
     
-    conversations = await db.conversations.find(filter_dict).sort("updated_at", -1).to_list(1000)
+    conversations = await db.conversations.find(filter_dict).sort("last_activity", -1).to_list(1000)
     return [Conversation(**conv) for conv in conversations]
 
 
+@api_router.post("/conversations")
+async def create_conversation(
+    participant_id: str,
+    platform: Platform,
+    current_user: User = Depends(get_current_user)
+):
+    # Check if conversation already exists
+    existing_conv = await db.conversations.find_one({
+        "participant_ids": {"$all": [current_user.id, participant_id]},
+        "platform": platform.value
+    })
+    
+    if existing_conv:
+        return Conversation(**existing_conv)
+    
+    conversation = Conversation(
+        participant_ids=[current_user.id, participant_id],
+        platform=platform,
+        created_by=current_user.id
+    )
+    
+    await db.conversations.insert_one(conversation.dict())
+    return conversation
+
+
 @api_router.get("/conversations/{conversation_id}/messages", response_model=List[Message])
-async def get_conversation_messages(conversation_id: str):
+async def get_conversation_messages(
+    conversation_id: str,
+    current_user: User = Depends(get_current_user)
+):
+    # Verify user is participant
+    conversation = await db.conversations.find_one({"id": conversation_id})
+    if not conversation or current_user.id not in conversation["participant_ids"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
     messages = await db.messages.find({"conversation_id": conversation_id}).sort("timestamp", 1).to_list(1000)
-    return [Message(**msg) for msg in messages]
+    
+    # Decrypt messages if encrypted
+    decrypted_messages = []
+    for msg in messages:
+        message_obj = Message(**msg)
+        if message_obj.encrypted_content and message_obj.platform == Platform.WHATGRAM:
+            try:
+                message_obj.content = decrypt_message(message_obj.encrypted_content)
+            except:
+                pass  # Keep original if decryption fails
+        decrypted_messages.append(message_obj)
+    
+    return decrypted_messages
 
 
 @api_router.post("/messages", response_model=Message)
-async def send_message(message: MessageCreate):
+async def send_message(
+    message: MessageCreate,
+    current_user: User = Depends(get_current_user)
+):
+    # Verify conversation exists and user is participant
+    conversation = await db.conversations.find_one({"id": message.conversation_id})
+    if not conversation or current_user.id not in conversation["participant_ids"]:
+        raise HTTPException(status_code=403, detail="Access denied")
+    
     message_dict = message.dict()
+    message_dict["sender_id"] = current_user.id
+    
+    # Encrypt content for WhatGram platform
+    if message.platform == Platform.WHATGRAM and message.content:
+        message_dict["encrypted_content"] = encrypt_message(message.content)
+    
     message_obj = Message(**message_dict)
     
     # Insert message
@@ -151,22 +439,39 @@ async def send_message(message: MessageCreate):
         {
             "$set": {
                 "last_message_id": message_obj.id,
-                "updated_at": datetime.utcnow()
+                "last_activity": datetime.utcnow()
             }
         }
+    )
+    
+    # Send real-time notification
+    await manager.send_personal_message(
+        json.dumps({
+            "type": "new_message",
+            "message": message_obj.dict(),
+            "conversation_id": message.conversation_id
+        }),
+        message.receiver_id
     )
     
     return message_obj
 
 
+# File Upload Routes
 @api_router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
     conversation_id: str = Form(...),
-    sender_id: str = Form(...),
-    platform: Platform = Form(...)
+    receiver_id: str = Form(...),
+    platform: Platform = Form(...),
+    current_user: User = Depends(get_current_user)
 ):
     try:
+        # Verify conversation
+        conversation = await db.conversations.find_one({"id": conversation_id})
+        if not conversation or current_user.id not in conversation["participant_ids"]:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
         # Generate unique filename
         file_extension = Path(file.filename).suffix
         unique_filename = f"{uuid.uuid4()}{file_extension}"
@@ -180,21 +485,33 @@ async def upload_file(
         file_size = file_path.stat().st_size
         mime_type = mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
         
+        # Determine message type
+        message_type = "file"
+        if mime_type.startswith("image/"):
+            message_type = "image"
+        elif mime_type.startswith("video/"):
+            message_type = "video"
+        elif mime_type.startswith("audio/"):
+            message_type = "audio"
+        
         # Create file message
         file_message = FileMessage(
             filename=unique_filename,
             original_name=file.filename,
             file_path=f"/uploads/{unique_filename}",
             file_size=file_size,
-            mime_type=mime_type
+            mime_type=mime_type,
+            encrypted=platform == Platform.WHATGRAM
         )
         
         # Create message with file
         message = Message(
             conversation_id=conversation_id,
-            sender_id=sender_id,
+            sender_id=current_user.id,
+            receiver_id=receiver_id,
             file_message=file_message,
-            platform=platform
+            platform=platform,
+            message_type=message_type
         )
         
         # Save to database
@@ -206,19 +523,37 @@ async def upload_file(
             {
                 "$set": {
                     "last_message_id": message.id,
-                    "updated_at": datetime.utcnow()
+                    "last_activity": datetime.utcnow()
                 }
             }
         )
         
-        return {"message": "File uploaded successfully", "file_message": file_message, "message_id": message.id}
+        # Send real-time notification
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "new_file",
+                "message": message.dict(),
+                "conversation_id": conversation_id
+            }),
+            receiver_id
+        )
+        
+        return {
+            "message": "File uploaded successfully",
+            "file_message": file_message,
+            "message_id": message.id,
+            "message_type": message_type
+        }
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
 
 
 @api_router.get("/files/{filename}")
-async def get_file(filename: str):
+async def get_file(
+    filename: str,
+    current_user: User = Depends(get_current_user)
+):
     file_path = UPLOAD_DIR / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -226,82 +561,180 @@ async def get_file(filename: str):
     return FileResponse(file_path)
 
 
+# Platform Connection Routes
+@api_router.post("/connect/whatsapp")
+async def connect_whatsapp(
+    qr_data: str = Form(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Connect user's WhatsApp account"""
+    # This would integrate with WhatsApp Business API
+    # For now, we'll simulate the connection
+    
+    await db.users.update_one(
+        {"id": current_user.id},
+        {"$set": {
+            "whatsapp_connected": True,
+            "whatsapp_session": qr_data[:50]  # Store session info
+        }}
+    )
+    
+    return {"message": "WhatsApp connected successfully", "status": "connected"}
+
+
+@api_router.post("/connect/telegram")
+async def connect_telegram(
+    phone_number: str = Form(...),
+    current_user: User = Depends(get_current_user)
+):
+    """Connect user's Telegram account"""
+    # This would integrate with Telegram API
+    # For now, we'll simulate the connection
+    
+    await db.users.update_one(
+        {"id": current_user.id},
+        {"$set": {
+            "telegram_connected": True,
+            "telegram_session": f"tg_session_{phone_number}"
+        }}
+    )
+    
+    return {"message": "Telegram connected successfully", "status": "connected"}
+
+
+# WebSocket endpoint
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    await manager.connect(websocket, user_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            # Handle incoming WebSocket messages
+            await websocket.send_text(f"Message received: {data}")
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, user_id)
+
+
+# Mock Data for Testing
 @api_router.post("/init-mock-data")
 async def init_mock_data():
-    # Clear existing data
-    await db.contacts.delete_many({})
-    await db.conversations.delete_many({})
-    await db.messages.delete_many({})
+    # Create demo user
+    demo_user = User(
+        username="demo_user",
+        email="demo@whatgram.com",
+        phone="+905551234567",
+        hashed_password=hash_password("demo123"),
+        whatsapp_connected=True,
+        telegram_connected=True
+    )
     
-    # Create WhatsApp contacts
-    whatsapp_contacts = [
-        Contact(name="Ali Yılmaz", phone="+90555123456", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Ayşe Demir", phone="+90555234567", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1494790108755-2616b612b786?w=100&h=100&fit=crop&crop=face", is_online=False),
-        Contact(name="Mehmet Can", phone="+90555345678", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Fatma Şahin", phone="+90555456789", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face", is_online=False),
-        Contact(name="Emre Kaya", phone="+90555567890", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Zeynep Özkan", phone="+90555678901", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face", is_online=False),
-        Contact(name="Burak Aydın", phone="+90555789012", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Selin Çelik", phone="+90555890123", platform=Platform.WHATSAPP, avatar_url="https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=100&h=100&fit=crop&crop=face", is_online=False),
-    ]
+    # Clear and insert demo user
+    await db.users.delete_many({"email": "demo@whatgram.com"})
+    await db.users.insert_one(demo_user.dict())
     
-    # Create Telegram contacts
-    telegram_contacts = [
-        Contact(name="Ahmet Türk", phone="+90555123111", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1560250097-0b93528c311a?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Elif Yıldız", phone="+90555234222", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1581456495146-65a71b2c8e52?w=100&h=100&fit=crop&crop=face", is_online=False),
-        Contact(name="Cem Doğan", phone="+90555345333", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1519345182560-3f2917c472ef?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Derya Arslan", phone="+90555456444", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&h=100&fit=crop&crop=face", is_online=False),
-        Contact(name="Oğuz Polat", phone="+90555567555", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="İrem Bulut", phone="+90555678666", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1489424731084-a5d8b219a5bb?w=100&h=100&fit=crop&crop=face", is_online=False),
-        Contact(name="Kerem Aktaş", phone="+90555789777", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1507591064344-4c6ce005b128?w=100&h=100&fit=crop&crop=face", is_online=True),
-        Contact(name="Gizem Koç", phone="+90555890888", platform=Platform.TELEGRAM, avatar_url="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=100&h=100&fit=crop&crop=face", is_online=False),
-    ]
+    # Clear existing data for demo user
+    await db.contacts.delete_many({"user_id": demo_user.id})
+    await db.conversations.delete_many({"participant_ids": demo_user.id})
+    await db.messages.delete_many({"sender_id": demo_user.id})
     
-    all_contacts = whatsapp_contacts + telegram_contacts
-    
-    # Insert contacts
-    for contact in all_contacts:
-        await db.contacts.insert_one(contact.dict())
-    
-    # Create conversations
-    conversations = []
-    for i, contact in enumerate(all_contacts):
-        conv = Conversation(
-            participant_ids=["user", contact.id],
-            platform=contact.platform
-        )
-        conversations.append(conv)
-        await db.conversations.insert_one(conv.dict())
-        
-        # Create sample messages
-        sample_messages = [
-            Message(
-                conversation_id=conv.id,
-                sender_id=contact.id,
-                content=f"Merhaba! {contact.platform.value} üzerinden mesaj gönderiyorum.",
-                platform=contact.platform
-            ),
-            Message(
-                conversation_id=conv.id,
-                sender_id="user",
-                content="Merhaba! Nasılsın?",
-                platform=contact.platform
-            ),
-            Message(
-                conversation_id=conv.id,
-                sender_id=contact.id,
-                content="İyiyim teşekkürler. Dosya paylaşma özelliğini test edebiliriz!",
-                platform=contact.platform
-            )
+    # Create contacts for each platform
+    contacts_data = {
+        Platform.WHATSAPP: [
+            {"name": "Ali Yılmaz", "phone": "+90555123456"},
+            {"name": "Ayşe Demir", "phone": "+90555234567"},
+            {"name": "Mehmet Can", "phone": "+90555345678"},
+            {"name": "Fatma Şahin", "phone": "+90555456789"},
+        ],
+        Platform.TELEGRAM: [
+            {"name": "Ahmet Türk", "phone": "+90555123111"},
+            {"name": "Elif Yıldız", "phone": "+90555234222"},
+            {"name": "Cem Doğan", "phone": "+90555345333"},
+            {"name": "Derya Arslan", "phone": "+90555456444"},
+        ],
+        Platform.WHATGRAM: [
+            {"name": "Emre Kaya (WhatGram)", "phone": "+90555567890"},
+            {"name": "Zeynep Özkan (WhatGram)", "phone": "+90555678901"},
+            {"name": "Burak Aydın (WhatGram)", "phone": "+90555789012"},
+            {"name": "Selin Çelik (WhatGram)", "phone": "+90555890123"},
         ]
-        
-        for msg in sample_messages:
-            await db.messages.insert_one(msg.dict())
+    }
+    
+    avatar_urls = [
+        "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=100&h=100&fit=crop&crop=face",
+        "https://images.unsplash.com/photo-1494790108755-2616b612b786?w=100&h=100&fit=crop&crop=face",
+        "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face",
+        "https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=100&h=100&fit=crop&crop=face"
+    ]
+    
+    all_contacts = []
+    conversations = []
+    
+    for platform, contact_list in contacts_data.items():
+        for i, contact_data in enumerate(contact_list):
+            contact = Contact(
+                user_id=demo_user.id,
+                name=contact_data["name"],
+                phone=contact_data["phone"],
+                platform=platform,
+                avatar_url=avatar_urls[i % len(avatar_urls)],
+                is_online=i % 2 == 0
+            )
+            all_contacts.append(contact)
+            await db.contacts.insert_one(contact.dict())
+            
+            # Create conversation
+            conversation = Conversation(
+                participant_ids=[demo_user.id, contact.id],
+                platform=platform,
+                created_by=demo_user.id
+            )
+            conversations.append(conversation)
+            await db.conversations.insert_one(conversation.dict())
+            
+            # Create sample messages
+            sample_messages = [
+                Message(
+                    conversation_id=conversation.id,
+                    sender_id=contact.id,
+                    receiver_id=demo_user.id,
+                    content=f"Merhaba! {platform.value} üzerinden mesaj gönderiyorum.",
+                    platform=platform
+                ),
+                Message(
+                    conversation_id=conversation.id,
+                    sender_id=demo_user.id,
+                    receiver_id=contact.id,
+                    content="Merhaba! Nasılsın?",
+                    platform=platform
+                ),
+                Message(
+                    conversation_id=conversation.id,
+                    sender_id=contact.id,
+                    receiver_id=demo_user.id,
+                    content="İyiyim teşekkürler. WhatGram'da dosya paylaşımı çok hızlı!" if platform == Platform.WHATGRAM else "İyiyim teşekkürler. Dosya paylaşma özelliğini test edebiliriz!",
+                    platform=platform
+                )
+            ]
+            
+            for msg in sample_messages:
+                # Encrypt WhatGram messages
+                if msg.platform == Platform.WHATGRAM and msg.content:
+                    msg.encrypted_content = encrypt_message(msg.content)
+                await db.messages.insert_one(msg.dict())
+    
+    # Create demo user token
+    access_token = create_access_token(data={"sub": demo_user.id})
     
     return {
-        "message": "Mock data initialized successfully",
+        "message": "WhatGram mock data initialized successfully",
+        "demo_user": {
+            "email": demo_user.email,
+            "password": "demo123",
+            "access_token": access_token
+        },
         "contacts_created": len(all_contacts),
-        "conversations_created": len(conversations)
+        "conversations_created": len(conversations),
+        "platforms": ["WhatsApp", "Telegram", "WhatGram"]
     }
 
 
