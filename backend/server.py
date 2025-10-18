@@ -233,6 +233,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user = await db.users.find_one({"id": user_id})
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
+    
+    # Convert ObjectId to string if present
+    if "_id" in user:
+        user.pop("_id")
+    
     return User(**user)
 
 
