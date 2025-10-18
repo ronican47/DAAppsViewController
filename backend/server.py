@@ -1011,6 +1011,8 @@ async def init_mock_data():
     await db.contacts.delete_many({"user_id": demo_user.id})
     await db.conversations.delete_many({"participant_ids": demo_user.id})
     await db.messages.delete_many({"sender_id": demo_user.id})
+    await db.groups.delete_many({"creator_id": demo_user.id})
+    await db.channels.delete_many({"creator_id": demo_user.id})
     
     # Create contacts for each platform
     contacts_data = {
