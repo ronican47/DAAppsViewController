@@ -190,18 +190,220 @@ const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
   );
 };
 
+// Group/Channel Creation Modals
+const CreateGroupModal = ({ isOpen, onClose, activeTab, token, onGroupCreated }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    isPublic: false,
+    memberPhones: ''
+  });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const memberPhonesArray = formData.memberPhones
+        .split(',') 
+        .map(phone => phone.trim())
+        .filter(phone => phone.length > 0);
+
+      await axios.post(`${API}/groups`, {
+        name: formData.name,
+        description: formData.description,
+        platform: activeTab,
+        is_public: formData.isPublic,
+        member_phones: memberPhonesArray
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      alert('Grup başarıyla oluşturuldu!');
+      onGroupCreated();
+      onClose();
+      setFormData({ name: '', description: '', isPublic: false, memberPhones: '' });
+    } catch (error) {
+      alert(error.response?.data?.detail || 'Grup oluşturma başarısız');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+        <h3 className="text-xl font-bold mb-4">Yeni Grup Oluştur</h3>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="text"
+            placeholder="Grup adı"
+            value={formData.name}
+            onChange={(e) => setFormData({...formData, name: e.target.value})}
+            className="w-full p-3 border rounded-lg"
+            required
+          />
+          <textarea
+            placeholder="Grup açıklaması (isteğe bağlı)"
+            value={formData.description}
+            onChange={(e) => setFormData({...formData, description: e.target.value})}
+            className="w-full p-3 border rounded-lg h-20"
+          />
+          <textarea
+            placeholder="Üye telefon numaraları (virgülle ayrılı): +905551234567, +905552345678"
+            value={formData.memberPhones}
+            onChange={(e) => setFormData({...formData, memberPhones: e.target.value})}
+            className="w-full p-3 border rounded-lg h-20"
+          />
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isPublic}
+              onChange={(e) => setFormData({...formData, isPublic: e.target.checked})}
+              className="mr-2"
+            />
+            Herkese açık grup
+          </label>
+          <div className="flex space-x-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:bg-gray-400"
+            >
+              {loading ? 'Oluşturuluyor...' : 'Grup Oluştur'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+            >
+              İptal
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const CreateChannelModal = ({ isOpen, onClose, activeTab, token, onChannelCreated }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    description: '',
+    isPublic: true,
+    canSubscribersMessage: false
+  });
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      await axios.post(`${API}/channels`, {
+        name: formData.name,
+        description: formData.description,
+        platform: activeTab,
+        is_public: formData.isPublic,
+        can_subscribers_message: formData.canSubscribersMessage
+      }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      alert('Kanal başarıyla oluşturuldu!');
+      onChannelCreated();
+      onClose();
+      setFormData({ name: '', description: '', isPublic: true, canSubscribersMessage: false });
+    } catch (error) {
+      alert(error.response?.data?.detail || 'Kanal oluşturma başarısız');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
+        <h3 className="text-xl font-bold mb-4">Yeni Kanal Oluştur</h3>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <input
+            type="text"
+            placeholder="Kanal adı"
+            value={formData.name}
+            onChange={(e) => setFormData({...formData, name: e.target.value})}
+            className="w-full p-3 border rounded-lg"
+            required
+          />
+          <textarea
+            placeholder="Kanal açıklaması (isteğe bağlı)"
+            value={formData.description}
+            onChange={(e) => setFormData({...formData, description: e.target.value})}
+            className="w-full p-3 border rounded-lg h-20"
+          />
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.isPublic}
+              onChange={(e) => setFormData({...formData, isPublic: e.target.checked})}
+              className="mr-2"
+            />
+            Herkese açık kanal
+          </label>
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={formData.canSubscribersMessage}
+              onChange={(e) => setFormData({...formData, canSubscribersMessage: e.target.checked})}
+              className="mr-2"
+            />
+            Abone olanlar mesaj gönderebilir
+          </label>
+          <div className="flex space-x-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex-1 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400"
+            >
+              {loading ? 'Oluşturuluyor...' : 'Kanal Oluştur'}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+            >
+              İptal
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 const App = () => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [activeTab, setActiveTab] = useState('whatsapp');
+  const [contentType, setContentType] = useState('contacts'); // 'contacts', 'groups', 'channels'
   const [contacts, setContacts] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [channels, setChannels] = useState([]);
   const [selectedContact, setSelectedContact] = useState(null);
+  const [selectedGroup, setSelectedGroup] = useState(null);
+  const [selectedChannel, setSelectedChannel] = useState(null);
   const [conversations, setConversations] = useState([]);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState({
     whatsapp: false,
     telegram: false,
@@ -238,15 +440,15 @@ const App = () => {
 
   useEffect(() => {
     if (token) {
-      loadContacts();
+      loadContent();
     }
-  }, [activeTab, token]);
+  }, [activeTab, contentType, token]);
 
   useEffect(() => {
-    if (selectedContact && token) {
+    if ((selectedContact || selectedGroup || selectedChannel) && token) {
       loadMessages();
     }
-  }, [selectedContact, token]);
+  }, [selectedContact, selectedGroup, selectedChannel, token]);
 
   useEffect(() => {
     scrollToBottom();
@@ -260,10 +462,8 @@ const App = () => {
         ws.current.onmessage = (event) => {
           const data = JSON.parse(event.data);
           if (data.type === 'new_message' || data.type === 'new_file') {
-            if (data.conversation_id === selectedContact?.conversationId) {
-              loadMessages();
-            }
-            loadContacts(); // Refresh contacts to update last message
+            loadMessages();
+            loadContent();
           }
         };
       } catch (error) {
@@ -304,16 +504,28 @@ const App = () => {
     }
   };
 
-  const loadContacts = async () => {
+  const loadContent = async () => {
     if (!token) return;
     
     try {
-      const response = await axios.get(`${API}/contacts?platform=${activeTab}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setContacts(response.data);
+      if (contentType === 'contacts') {
+        const response = await axios.get(`${API}/contacts?platform=${activeTab}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setContacts(response.data);
+      } else if (contentType === 'groups') {
+        const response = await axios.get(`${API}/groups?platform=${activeTab}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setGroups(response.data);
+      } else if (contentType === 'channels') {
+        const response = await axios.get(`${API}/channels?platform=${activeTab}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        setChannels(response.data);
+      }
     } catch (error) {
-      console.error('Error loading contacts:', error);
+      console.error('Error loading content:', error);
       if (error.response?.status === 401) {
         logout();
       }
@@ -321,11 +533,12 @@ const App = () => {
   };
 
   const loadMessages = async () => {
-    if (!token || !selectedContact || !selectedContact.conversationId) return;
+    const currentChat = selectedContact || selectedGroup || selectedChannel;
+    if (!token || !currentChat || !currentChat.conversationId) return;
     
     try {
       const response = await axios.get(
-        `${API}/conversations/${selectedContact.conversationId}/messages`,
+        `${API}/conversations/${currentChat.conversationId}/messages`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       setMessages(response.data);
@@ -334,33 +547,64 @@ const App = () => {
     }
   };
 
-  const selectContact = async (contact) => {
+  const selectChat = async (item, type) => {
     if (!token) return;
     
     try {
-      // Create or get conversation
-      const response = await axios.post(
-        `${API}/conversations?participant_id=${contact.id}&platform=${activeTab}`,
-        {},
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      let conversationId;
       
-      contact.conversationId = response.data.id;
-      setSelectedContact(contact);
+      if (type === 'contact') {
+        // Create or get conversation for contact
+        const response = await axios.post(
+          `${API}/conversations?participant_id=${item.id}&platform=${activeTab}`,
+          {},
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        conversationId = response.data.id;
+        item.conversationId = conversationId;
+        setSelectedContact(item);
+        setSelectedGroup(null);
+        setSelectedChannel(null);
+      } else if (type === 'group' || type === 'channel') {
+        // Groups and channels already have conversations
+        // Find the conversation by group_id or channel_id
+        const response = await axios.get(`${API}/conversations?platform=${activeTab}`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        const conversation = response.data.find(conv => 
+          (type === 'group' && conv.group_id === item.id) ||
+          (type === 'channel' && conv.channel_id === item.id)
+        );
+        
+        if (conversation) {
+          item.conversationId = conversation.id;
+          if (type === 'group') {
+            setSelectedGroup(item);
+            setSelectedContact(null);
+            setSelectedChannel(null);
+          } else {
+            setSelectedChannel(item);
+            setSelectedContact(null);
+            setSelectedGroup(null);
+          }
+        }
+      }
     } catch (error) {
-      console.error('Error selecting contact:', error);
+      console.error('Error selecting chat:', error);
     }
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim() || !selectedContact || !token) return;
+    const currentChat = selectedContact || selectedGroup || selectedChannel;
+    if (!newMessage.trim() || !currentChat || !token) return;
 
     try {
       await axios.post(
         `${API}/messages`,
         {
-          conversation_id: selectedContact.conversationId,
-          receiver_id: selectedContact.id,
+          conversation_id: currentChat.conversationId,
+          receiver_id: selectedContact ? selectedContact.id : "", // Groups/channels don't need receiver_id
           content: newMessage,
           platform: activeTab
         },
@@ -390,7 +634,8 @@ const App = () => {
   };
 
   const uploadFiles = async () => {
-    if (selectedFiles.length === 0 || !selectedContact || !token) return;
+    const currentChat = selectedContact || selectedGroup || selectedChannel;
+    if (selectedFiles.length === 0 || !currentChat || !token) return;
 
     setIsUploading(true);
     
@@ -398,8 +643,8 @@ const App = () => {
       for (const file of selectedFiles) {
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('conversation_id', selectedContact.conversationId);
-        formData.append('receiver_id', selectedContact.id);
+        formData.append('conversation_id', currentChat.conversationId);
+        formData.append('receiver_id', selectedContact ? selectedContact.id : "");
         formData.append('platform', activeTab);
 
         await axios.post(`${API}/upload`, formData, {
@@ -500,6 +745,35 @@ const App = () => {
     );
   };
 
+  const getCurrentChatInfo = () => {
+    if (selectedContact) {
+      return {
+        name: selectedContact.name,
+        subtitle: selectedContact.phone,
+        avatar: selectedContact.avatar_url,
+        type: 'Kişi',
+        isOnline: selectedContact.is_online
+      };
+    } else if (selectedGroup) {
+      return {
+        name: selectedGroup.name,
+        subtitle: `${selectedGroup.member_count} üye`,
+        avatar: selectedGroup.avatar_url || 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=100&h=100&fit=crop',
+        type: 'Grup',
+        isOnline: false
+      };
+    } else if (selectedChannel) {
+      return {
+        name: selectedChannel.name,
+        subtitle: `${selectedChannel.subscriber_count} abone`,
+        avatar: selectedChannel.avatar_url || 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=100&h=100&fit=crop',
+        type: 'Kanal',
+        isOnline: false
+      };
+    }
+    return null;
+  };
+
   if (!token) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-400 flex items-center justify-center">
@@ -523,6 +797,8 @@ const App = () => {
       </div>
     );
   }
+
+  const currentChatInfo = getCurrentChatInfo();
 
   return (
     <div className="flex h-screen bg-gray-100">
@@ -548,7 +824,7 @@ const App = () => {
         <div className="flex border-b border-gray-200">
           <button
             onClick={() => setActiveTab('whatsapp')}
-            className={`flex-1 py-3 px-4 text-sm font-medium flex items-center justify-center space-x-2 ${
+            className={`flex-1 py-3 px-2 text-xs font-medium flex items-center justify-center space-x-1 ${
               activeTab === 'whatsapp'
                 ? 'bg-green-500 text-white'
                 : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
@@ -570,7 +846,7 @@ const App = () => {
           </button>
           <button
             onClick={() => setActiveTab('telegram')}
-            className={`flex-1 py-3 px-4 text-sm font-medium flex items-center justify-center space-x-2 ${
+            className={`flex-1 py-3 px-2 text-xs font-medium flex items-center justify-center space-x-1 ${
               activeTab === 'telegram'
                 ? 'bg-blue-500 text-white'
                 : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
@@ -592,7 +868,7 @@ const App = () => {
           </button>
           <button
             onClick={() => setActiveTab('whatgram')}
-            className={`flex-1 py-3 px-4 text-sm font-medium flex items-center justify-center space-x-2 ${
+            className={`flex-1 py-3 px-2 text-xs font-medium flex items-center justify-center space-x-1 ${
               activeTab === 'whatgram'
                 ? 'bg-purple-500 text-white'
                 : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
@@ -605,17 +881,96 @@ const App = () => {
           </button>
         </div>
 
-        {/* Contacts List */}
+        {/* Content Type Tabs */}
+        <div className="flex border-b border-gray-200 bg-gray-50">
+          <button
+            onClick={() => {
+              setContentType('contacts');
+              setSelectedContact(null);
+              setSelectedGroup(null);
+              setSelectedChannel(null);
+            }}
+            className={`flex-1 py-2 px-3 text-sm font-medium ${
+              contentType === 'contacts'
+                ? `${getPlatformColor(activeTab)} text-white`
+                : 'text-gray-700 hover:bg-gray-100'
+            }`}
+            data-testid="contacts-tab"
+          >
+            👥 Kişiler
+          </button>
+          <button
+            onClick={() => {
+              setContentType('groups');
+              setSelectedContact(null);
+              setSelectedGroup(null);
+              setSelectedChannel(null);
+            }}
+            className={`flex-1 py-2 px-3 text-sm font-medium ${
+              contentType === 'groups'
+                ? `${getPlatformColor(activeTab)} text-white`
+                : 'text-gray-700 hover:bg-gray-100'
+            }`}
+            data-testid="groups-tab"
+          >
+            👥 Gruplar
+          </button>
+          <button
+            onClick={() => {
+              setContentType('channels');
+              setSelectedContact(null);
+              setSelectedGroup(null);
+              setSelectedChannel(null);
+            }}
+            className={`flex-1 py-2 px-3 text-sm font-medium ${
+              contentType === 'channels'
+                ? `${getPlatformColor(activeTab)} text-white`
+                : 'text-gray-700 hover:bg-gray-100'
+            }`}
+            data-testid="channels-tab"
+          >
+            📢 Kanallar
+          </button>
+        </div>
+
+        {/* Content List */}
         <div className="flex-1 overflow-y-auto">
           <div className="p-4">
-            <h3 className="text-lg font-semibold mb-3" data-testid="contacts-title">
-              Kişiler ({contacts.length})
+            {/* Create Button */}
+            <div className="mb-4">
+              {contentType === 'groups' && (
+                <button
+                  onClick={() => setShowCreateGroup(true)}
+                  className={`w-full py-2 px-4 ${getPlatformColor(activeTab)} text-white rounded-lg hover:opacity-80 text-sm`}
+                  data-testid="create-group-btn"
+                >
+                  + Yeni Grup Oluştur
+                </button>
+              )}
+              {contentType === 'channels' && (
+                <button
+                  onClick={() => setShowCreateChannel(true)}
+                  className={`w-full py-2 px-4 ${getPlatformColor(activeTab)} text-white rounded-lg hover:opacity-80 text-sm`}
+                  data-testid="create-channel-btn"
+                >
+                  + Yeni Kanal Oluştur
+                </button>
+              )}
+            </div>
+
+            {/* Title */}
+            <h3 className="text-lg font-semibold mb-3" data-testid="content-title">
+              {contentType === 'contacts' && `Kişiler (${contacts.length})`}
+              {contentType === 'groups' && `Gruplar (${groups.length})`}
+              {contentType === 'channels' && `Kanallar (${channels.length})`}
             </h3>
+
+            {/* List */}
             <div className="space-y-2">
-              {contacts.map((contact) => (
+              {contentType === 'contacts' && contacts.map((contact) => (
                 <div
                   key={contact.id}
-                  onClick={() => selectContact(contact)}
+                  onClick={() => selectChat(contact, 'contact')}
                   className={`flex items-center p-3 rounded-lg cursor-pointer transition-colors ${
                     selectedContact?.id === contact.id
                       ? `${getPlatformColor(activeTab).replace('bg-', 'bg-opacity-20 bg-')}`
@@ -634,14 +989,68 @@ const App = () => {
                     )}
                   </div>
                   <div className="ml-3 flex-1 min-w-0">
-                    <p className="font-medium text-gray-900 truncate">
-                      {contact.name}
-                    </p>
-                    <p className="text-sm text-gray-500 truncate">
-                      {contact.phone}
-                    </p>
+                    <p className="font-medium text-gray-900 truncate">{contact.name}</p>
+                    <p className="text-sm text-gray-500 truncate">{contact.phone}</p>
                   </div>
                   <div className={`w-3 h-3 rounded-full ${getPlatformColor(contact.platform)}`}></div>
+                </div>
+              ))}
+
+              {contentType === 'groups' && groups.map((group) => (
+                <div
+                  key={group.id}
+                  onClick={() => selectChat(group, 'group')}
+                  className={`flex items-center p-3 rounded-lg cursor-pointer transition-colors ${
+                    selectedGroup?.id === group.id
+                      ? `${getPlatformColor(activeTab).replace('bg-', 'bg-opacity-20 bg-')}`
+                      : 'hover:bg-gray-100'
+                  }`}
+                  data-testid={`group-${group.id}`}
+                >
+                  <div className="relative">
+                    <img
+                      src={group.avatar_url || 'https://images.unsplash.com/photo-1522202176988-66273c2fd55f?w=100&h=100&fit=crop'}
+                      alt={group.name}
+                      className="w-12 h-12 rounded-full object-cover"
+                    />
+                  </div>
+                  <div className="ml-3 flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 truncate">{group.name}</p>
+                    <p className="text-sm text-gray-500 truncate">{group.member_count} üye</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs text-gray-400">Grup</span>
+                    <div className={`w-3 h-3 rounded-full ${getPlatformColor(group.platform)} mt-1`}></div>
+                  </div>
+                </div>
+              ))}
+
+              {contentType === 'channels' && channels.map((channel) => (
+                <div
+                  key={channel.id}
+                  onClick={() => selectChat(channel, 'channel')}
+                  className={`flex items-center p-3 rounded-lg cursor-pointer transition-colors ${
+                    selectedChannel?.id === channel.id
+                      ? `${getPlatformColor(activeTab).replace('bg-', 'bg-opacity-20 bg-')}`
+                      : 'hover:bg-gray-100'
+                  }`}
+                  data-testid={`channel-${channel.id}`}
+                >
+                  <div className="relative">
+                    <img
+                      src={channel.avatar_url || 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=100&h=100&fit=crop'}
+                      alt={channel.name}
+                      className="w-12 h-12 rounded-full object-cover"
+                    />
+                  </div>
+                  <div className="ml-3 flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 truncate">{channel.name}</p>
+                    <p className="text-sm text-gray-500 truncate">{channel.subscriber_count} abone</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-xs text-gray-400">Kanal</span>
+                    <div className={`w-3 h-3 rounded-full ${getPlatformColor(channel.platform)} mt-1`}></div>
+                  </div>
                 </div>
               ))}
             </div>
@@ -651,31 +1060,30 @@ const App = () => {
 
       {/* Chat Area */}
       <div className="flex-1 flex flex-col">
-        {selectedContact ? (
+        {currentChatInfo ? (
           <>
             {/* Chat Header */}
             <div className={`flex items-center justify-between p-4 border-b border-gray-200 ${getPlatformColor(activeTab)} text-white`}>
               <div className="flex items-center">
                 <img
-                  src={selectedContact.avatar_url}
-                  alt={selectedContact.name}
+                  src={currentChatInfo.avatar}
+                  alt={currentChatInfo.name}
                   className="w-10 h-10 rounded-full object-cover"
                 />
                 <div className="ml-3">
                   <h4 className="font-medium" data-testid="chat-contact-name">
-                    {selectedContact.name}
+                    {currentChatInfo.name}
                   </h4>
                   <p className="text-sm opacity-75">
-                    {selectedContact.is_online ? 'Çevrimiçi' : 'Son görülme: az önce'} • 
-                    {activeTab === 'whatgram' && <span className="text-green-300">🔒 E2E Şifreli</span>}
-                    {activeTab !== 'whatgram' && <span>Platform: {activeTab}</span>}
+                    {currentChatInfo.subtitle} • {currentChatInfo.type}
+                    {activeTab === 'whatgram' && <span className="ml-2">🔒 E2E Şifreli</span>}
                   </p>
                 </div>
               </div>
               <div className="text-right">
                 <p className="text-sm opacity-75 capitalize">{activeTab}</p>
                 {activeTab === 'whatgram' && (
-                  <p className="text-xs opacity-60">Sınırsız Dosya Paylaşımı</p>
+                  <p className="text-xs opacity-60">Sınırsız Dosya</p>
                 )}
               </div>
             </div>
@@ -801,7 +1209,7 @@ const App = () => {
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                  placeholder={`${activeTab} üzerinden mesaj yazın...`}
+                  placeholder={`${currentChatInfo.type.toLowerCase()}'a mesaj yazın...`}
                   className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
                   data-testid="message-input"
                 />
@@ -828,9 +1236,17 @@ const App = () => {
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center text-gray-500">
-              <div className="text-6xl mb-4">💬</div>
-              <h3 className="text-xl font-medium mb-2">WhatGram'a Hoş Geldiniz</h3>
-              <p className="mb-4">Sol tarafdan bir kişi seçerek mesajlaşmaya başlayın</p>
+              <div className="text-6xl mb-4">
+                {contentType === 'contacts' && '👥'}
+                {contentType === 'groups' && '👥'}
+                {contentType === 'channels' && '📢'}
+              </div>
+              <h3 className="text-xl font-medium mb-2">WhatGram ile Başlayın</h3>
+              <p className="mb-4">
+                {contentType === 'contacts' && 'Bir kişi seçerek mesajlaşmaya başlayın'}
+                {contentType === 'groups' && 'Bir grup seçin veya yeni grup oluşturun'}
+                {contentType === 'channels' && 'Bir kanal seçin veya yeni kanal oluşturun'}
+              </p>
               <div className="space-y-2 text-sm">
                 <p className="flex items-center justify-center">
                   <span className="inline-block w-3 h-3 bg-green-500 rounded-full mr-2"></span>
@@ -849,6 +1265,23 @@ const App = () => {
           </div>
         )}
       </div>
+
+      {/* Modals */}
+      <CreateGroupModal
+        isOpen={showCreateGroup}
+        onClose={() => setShowCreateGroup(false)}
+        activeTab={activeTab}
+        token={token}
+        onGroupCreated={loadContent}
+      />
+
+      <CreateChannelModal
+        isOpen={showCreateChannel}
+        onClose={() => setShowCreateChannel(false)}
+        activeTab={activeTab}
+        token={token}
+        onChannelCreated={loadContent}
+      />
     </div>
   );
 };
