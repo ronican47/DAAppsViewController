@@ -28,6 +28,78 @@ import aiohttp
 from googletrans import Translator
 import langdetect
 
+# Create a translator instance
+translator = Translator()
+
+# Language settings
+SUPPORTED_LANGUAGES = {
+    'tr': 'Türkçe',
+    'en': 'English', 
+    'de': 'Deutsch',
+    'fr': 'Français',
+    'es': 'Español',
+    'it': 'Italiano',
+    'ru': 'Русский',
+    'ar': 'العربية',
+    'ja': '日本語',
+    'ko': '한국어',
+    'zh': '中文',
+    'pt': 'Português'
+}
+
+def detect_language(text: str) -> str:
+    """Detect language of text"""
+    try:
+        return langdetect.detect(text)
+    except:
+        return 'en'  # Default to English if detection fails
+
+async def translate_text(text: str, target_language: str, source_language: str = None) -> Dict:
+    """Translate text to target language"""
+    try:
+        if source_language is None:
+            source_language = detect_language(text)
+        
+        # Don't translate if source and target are the same
+        if source_language == target_language:
+            return {
+                'translated_text': text,
+                'source_language': source_language,
+                'target_language': target_language,
+                'confidence': 1.0
+            }
+        
+        result = translator.translate(text, dest=target_language, src=source_language)
+        
+        return {
+            'translated_text': result.text,
+            'source_language': result.src,
+            'target_language': target_language,
+            'confidence': getattr(result, 'confidence', 0.8) or 0.8
+        }
+    except Exception as e:
+        print(f"Translation error: {e}")
+        return {
+            'translated_text': text,  # Return original if translation fails
+            'source_language': source_language or 'en',
+            'target_language': target_language,
+            'confidence': 0.0
+        }
+
+async def get_message_translations(message_content: str, user_languages: List[str]) -> Dict[str, str]:
+    """Get translations for message in multiple languages"""
+    translations = {}
+    source_lang = detect_language(message_content)
+    
+    for target_lang in user_languages:
+        if target_lang != source_lang:
+            translation_result = await translate_text(message_content, target_lang, source_lang)
+            translations[target_lang] = translation_result['translated_text']
+        else:
+            translations[target_lang] = message_content
+    
+    return translations
+
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
