@@ -1135,6 +1135,72 @@ async def connect_telegram(
     return {"message": "Telegram connected successfully", "status": "connected"}
 
 
+# Mock Platform Integration Routes
+@api_router.get("/mock/whatsapp/contacts")
+async def get_whatsapp_contacts_mock(
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get mock WhatsApp contacts"""
+    contacts = await whatsapp_mock.get_contacts(current_user.id)
+    return {"contacts": contacts, "platform": "whatsapp", "mock": True}
+
+
+@api_router.get("/mock/whatsapp/groups")
+async def get_whatsapp_groups_mock(
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get mock WhatsApp groups"""
+    groups = await whatsapp_mock.get_groups(current_user.id)
+    return {"groups": groups, "platform": "whatsapp", "mock": True}
+
+
+@api_router.get("/mock/whatsapp/messages")
+async def get_whatsapp_messages_mock(
+    limit: int = 10,
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get mock WhatsApp recent messages"""
+    messages = await whatsapp_mock.get_recent_messages(current_user.id, limit)
+    return {"messages": messages, "platform": "whatsapp", "mock": True}
+
+
+@api_router.get("/mock/telegram/contacts")
+async def get_telegram_contacts_mock(
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get mock Telegram contacts"""
+    contacts = await telegram_mock.get_contacts(current_user.id)
+    return {"contacts": contacts, "platform": "telegram", "mock": True}
+
+
+@api_router.get("/mock/telegram/channels")
+async def get_telegram_channels_mock(
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get mock Telegram channels"""
+    channels = await telegram_mock.get_channels(current_user.id)
+    return {"channels": channels, "platform": "telegram", "mock": True}
+
+
+@api_router.get("/mock/telegram/groups")
+async def get_telegram_groups_mock(
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get mock Telegram groups"""
+    groups = await telegram_mock.get_groups(current_user.id)
+    return {"groups": groups, "platform": "telegram", "mock": True}
+
+
+@api_router.get("/mock/telegram/messages")
+async def get_telegram_messages_mock(
+    limit: int = 10,
+    current_user: User = Depends(get_current_user_required)
+):
+    """Get mock Telegram recent messages"""
+    messages = await telegram_mock.get_recent_messages(current_user.id, limit)
+    return {"messages": messages, "platform": "telegram", "mock": True}
+
+
 # Translation Routes
 @api_router.get("/languages")
 async def get_supported_languages():
