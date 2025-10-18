@@ -9,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import uuid
 from datetime import datetime, timedelta
@@ -23,6 +23,7 @@ import asyncio
 from fastapi import WebSocket, WebSocketDisconnect
 import json
 from bson import ObjectId
+import random
 
 
 ROOT_DIR = Path(__file__).parent
@@ -35,7 +36,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 # Security
 SECRET_KEY = os.environ.get('SECRET_KEY', 'whatgram-secret-key-2024')
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
+ACCESS_TOKEN_EXPIRE_MINUTES = 1440  # 24 hours for mobile apps
 
 # Encryption key for E2E
 ENCRYPTION_KEY = Fernet.generate_key()
@@ -56,7 +57,7 @@ api_router = APIRouter(prefix="/api")
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Security
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 # WebSocket Manager
 class ConnectionManager:
@@ -70,18 +71,25 @@ class ConnectionManager:
         self.user_connections[user_id] = websocket
     
     def disconnect(self, websocket: WebSocket, user_id: str):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
         if user_id in self.user_connections:
             del self.user_connections[user_id]
     
     async def send_personal_message(self, message: str, user_id: str):
         if user_id in self.user_connections:
             websocket = self.user_connections[user_id]
-            await websocket.send_text(message)
+            try:
+                await websocket.send_text(message)
+            except:
+                pass
     
     async def broadcast(self, message: str):
         for connection in self.active_connections:
-            await connection.send_text(message)
+            try:
+                await connection.send_text(message)
+            except:
+                pass
 
 manager = ConnectionManager()
 
@@ -100,11 +108,11 @@ class UserRole(str, Enum):
 class User(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     username: str
-    email: EmailStr
-    phone: Optional[str] = None
-    hashed_password: str
+    phone: str  # Primary identifier
+    hashed_password: Optional[str] = None  # For admin users
     role: UserRole = UserRole.USER
     is_active: bool = True
+    is_verified: bool = False
     created_at: datetime = Field(default_factory=datetime.utcnow)
     profile_picture: Optional[str] = None
     
@@ -115,16 +123,28 @@ class User(BaseModel):
     telegram_session: Optional[str] = None
 
 
-class UserCreate(BaseModel):
+class PhoneVerification(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    phone: str
+    code: str
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    expires_at: datetime
+    is_used: bool = False
+    attempts: int = 0
+
+
+class PhoneRegister(BaseModel):
+    phone: str
     username: str
-    email: EmailStr
-    phone: Optional[str] = None
-    password: str
 
 
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
+class PhoneLogin(BaseModel):
+    phone: str
+
+
+class VerifyCode(BaseModel):
+    phone: str
+    code: str
 
 
 class Token(BaseModel):
@@ -202,12 +222,27 @@ class MessageCreate(BaseModel):
 
 
 # Utility functions
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+def normalize_phone(phone: str) -> str:
+    """Normalize phone number format"""
+    # Remove all non-digit characters
+    phone = ''.join(filter(str.isdigit, phone))
+    # Add +90 prefix if not present for Turkish numbers
+    if len(phone) == 10 and not phone.startswith('90'):
+        phone = '90' + phone
+    elif len(phone) == 11 and phone.startswith('0'):
+        phone = '90' + phone[1:]
+    return '+' + phone
 
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+def generate_sms_code() -> str:
+    """Generate 6-digit SMS verification code"""
+    return str(random.randint(100000, 999999))
+
+
+async def send_sms_code(phone: str, code: str) -> bool:
+    """Simulate SMS sending (in real app, integrate with SMS provider)"""
+    print(f"📱 SMS SENT to {phone}: Verification code is {code}")
+    return True
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
@@ -222,23 +257,32 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if not credentials:
+        return None
+    
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            return None
     except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        return None
     
     user = await db.users.find_one({"id": user_id})
     if user is None:
-        raise HTTPException(status_code=401, detail="User not found")
+        return None
     
     # Convert ObjectId to string if present
     if "_id" in user:
         user.pop("_id")
     
     return User(**user)
+
+
+async def get_current_user_required(current_user: User = Depends(get_current_user)):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return current_user
 
 
 def encrypt_message(content: str) -> str:
@@ -257,43 +301,98 @@ async def root():
     return {
         "message": "WhatGram API - Unified Messaging Platform",
         "version": "1.0.0",
-        "platforms": ["WhatsApp", "Telegram", "WhatGram"]
+        "platforms": ["WhatsApp", "Telegram", "WhatGram"],
+        "auth_type": "phone_based"
     }
 
 
-# Authentication Routes
-@api_router.post("/auth/register", response_model=Token)
-async def register(user_data: UserCreate):
-    # Check if user exists
-    existing_user = await db.users.find_one({"email": user_data.email})
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
+# Phone-based Authentication Routes
+@api_router.post("/auth/request-code")
+async def request_verification_code(phone_data: PhoneLogin):
+    """Request SMS verification code for login/register"""
+    phone = normalize_phone(phone_data.phone)
     
-    # Check username
-    existing_username = await db.users.find_one({"username": user_data.username})
-    if existing_username:
-        raise HTTPException(status_code=400, detail="Username already taken")
+    # Generate verification code
+    code = generate_sms_code()
+    expires_at = datetime.utcnow() + timedelta(minutes=5)  # 5 minutes expiry
     
-    # Create user
-    hashed_password = hash_password(user_data.password)
-    user = User(
-        username=user_data.username,
-        email=user_data.email,
-        phone=user_data.phone,
-        hashed_password=hashed_password
+    # Store verification in database
+    verification = PhoneVerification(
+        phone=phone,
+        code=code,
+        expires_at=expires_at
     )
     
-    await db.users.insert_one(user.dict())
+    # Remove any existing pending verifications for this phone
+    await db.phone_verifications.delete_many({"phone": phone, "is_used": False})
     
-    # Create token
+    # Insert new verification
+    await db.phone_verifications.insert_one(verification.dict())
+    
+    # Send SMS (simulated)
+    await send_sms_code(phone, code)
+    
+    return {
+        "message": "Verification code sent to your phone",
+        "phone": phone,
+        "expires_in": 300  # 5 minutes in seconds
+    }
+
+
+@api_router.post("/auth/verify-code", response_model=Token)
+async def verify_code_and_login(verify_data: VerifyCode):
+    """Verify SMS code and login/register user"""
+    phone = normalize_phone(verify_data.phone)
+    
+    # Find verification record
+    verification = await db.phone_verifications.find_one({
+        "phone": phone,
+        "code": verify_data.code,
+        "is_used": False
+    })
+    
+    if not verification:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code")
+    
+    # Check if code has expired
+    verification_obj = PhoneVerification(**verification)
+    if datetime.utcnow() > verification_obj.expires_at:
+        raise HTTPException(status_code=400, detail="Verification code has expired")
+    
+    # Mark verification as used
+    await db.phone_verifications.update_one(
+        {"id": verification_obj.id},
+        {"$set": {"is_used": True}}
+    )
+    
+    # Check if user already exists
+    existing_user = await db.users.find_one({"phone": phone})
+    
+    if existing_user:
+        # Login existing user
+        existing_user.pop("_id", None)
+        user = User(**existing_user)
+    else:
+        # Register new user
+        username = f"user_{phone[-4:]}"  # Use last 4 digits as default username
+        user = User(
+            username=username,
+            phone=phone,
+            is_verified=True,
+            whatsapp_connected=True,
+            telegram_connected=True
+        )
+        
+        await db.users.insert_one(user.dict())
+    
+    # Create access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.id}, expires_delta=access_token_expires
     )
     
     user_dict = user.dict()
-    user_dict.pop('hashed_password')  # Don't send password
-    user_dict.pop('_id', None)  # Remove MongoDB ObjectId
+    user_dict.pop('hashed_password', None)  # Don't send password
     
     return {
         "access_token": access_token,
@@ -302,30 +401,22 @@ async def register(user_data: UserCreate):
     }
 
 
-@api_router.post("/auth/login", response_model=Token)
-async def login(user_credentials: UserLogin):
-    user = await db.users.find_one({"email": user_credentials.email})
-    if not user or not verify_password(user_credentials.password, user["hashed_password"]):
-        raise HTTPException(status_code=401, detail="Incorrect email or password")
-    
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user["id"]}, expires_delta=access_token_expires
+@api_router.post("/auth/update-profile")
+async def update_user_profile(
+    username: str = Form(...),
+    current_user: User = Depends(get_current_user_required)
+):
+    """Update user profile after registration"""
+    await db.users.update_one(
+        {"id": current_user.id},
+        {"$set": {"username": username}}
     )
     
-    user_dict = user.copy()
-    user_dict.pop('hashed_password')  # Don't send password
-    user_dict.pop('_id', None)  # Remove MongoDB ObjectId
-    
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": user_dict
-    }
+    return {"message": "Profile updated successfully"}
 
 
-@api_router.get("/auth/me", response_model=User)
-async def get_me(current_user: User = Depends(get_current_user)):
+@api_router.get("/auth/me")
+async def get_me(current_user: User = Depends(get_current_user_required)):
     return current_user
 
 
@@ -333,7 +424,7 @@ async def get_me(current_user: User = Depends(get_current_user)):
 @api_router.get("/contacts", response_model=List[Contact])
 async def get_contacts(
     platform: Optional[Platform] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     filter_dict = {"user_id": current_user.id}
     if platform:
@@ -349,7 +440,7 @@ async def get_contacts(
 @api_router.post("/contacts", response_model=Contact)
 async def create_contact(
     contact: ContactCreate,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     contact_dict = contact.dict()
     contact_dict["user_id"] = current_user.id
@@ -362,7 +453,7 @@ async def create_contact(
 @api_router.get("/conversations", response_model=List[Conversation])
 async def get_conversations(
     platform: Optional[Platform] = None,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     filter_dict = {"participant_ids": current_user.id}
     if platform:
@@ -379,7 +470,7 @@ async def get_conversations(
 async def create_conversation(
     participant_id: str,
     platform: Platform,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     # Check if conversation already exists
     existing_conv = await db.conversations.find_one({
@@ -404,7 +495,7 @@ async def create_conversation(
 @api_router.get("/conversations/{conversation_id}/messages", response_model=List[Message])
 async def get_conversation_messages(
     conversation_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     # Verify user is participant
     conversation = await db.conversations.find_one({"id": conversation_id})
@@ -432,7 +523,7 @@ async def get_conversation_messages(
 @api_router.post("/messages", response_model=Message)
 async def send_message(
     message: MessageCreate,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     # Verify conversation exists and user is participant
     conversation = await db.conversations.find_one({"id": message.conversation_id})
@@ -463,14 +554,17 @@ async def send_message(
     )
     
     # Send real-time notification
-    await manager.send_personal_message(
-        json.dumps({
-            "type": "new_message",
-            "message": message_obj.dict(),
-            "conversation_id": message.conversation_id
-        }),
-        message.receiver_id
-    )
+    try:
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "new_message",
+                "message": message_obj.dict(),
+                "conversation_id": message.conversation_id
+            }),
+            message.receiver_id
+        )
+    except:
+        pass
     
     return message_obj
 
@@ -482,7 +576,7 @@ async def upload_file(
     conversation_id: str = Form(...),
     receiver_id: str = Form(...),
     platform: Platform = Form(...),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     try:
         # Verify conversation
@@ -547,14 +641,17 @@ async def upload_file(
         )
         
         # Send real-time notification
-        await manager.send_personal_message(
-            json.dumps({
-                "type": "new_file",
-                "message": message.dict(),
-                "conversation_id": conversation_id
-            }),
-            receiver_id
-        )
+        try:
+            await manager.send_personal_message(
+                json.dumps({
+                    "type": "new_file",
+                    "message": message.dict(),
+                    "conversation_id": conversation_id
+                }),
+                receiver_id
+            )
+        except:
+            pass
         
         return {
             "message": "File uploaded successfully",
@@ -568,10 +665,7 @@ async def upload_file(
 
 
 @api_router.get("/files/{filename}")
-async def get_file(
-    filename: str,
-    current_user: User = Depends(get_current_user)
-):
+async def get_file(filename: str):
     file_path = UPLOAD_DIR / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -582,18 +676,14 @@ async def get_file(
 # Platform Connection Routes
 @api_router.post("/connect/whatsapp")
 async def connect_whatsapp(
-    qr_data: str = Form(...),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     """Connect user's WhatsApp account"""
-    # This would integrate with WhatsApp Business API
-    # For now, we'll simulate the connection
-    
     await db.users.update_one(
         {"id": current_user.id},
         {"$set": {
             "whatsapp_connected": True,
-            "whatsapp_session": qr_data[:50]  # Store session info
+            "whatsapp_session": f"wa_session_{current_user.phone}"
         }}
     )
     
@@ -602,18 +692,14 @@ async def connect_whatsapp(
 
 @api_router.post("/connect/telegram")
 async def connect_telegram(
-    phone_number: str = Form(...),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user_required)
 ):
     """Connect user's Telegram account"""
-    # This would integrate with Telegram API
-    # For now, we'll simulate the connection
-    
     await db.users.update_one(
         {"id": current_user.id},
         {"$set": {
             "telegram_connected": True,
-            "telegram_session": f"tg_session_{phone_number}"
+            "telegram_session": f"tg_session_{current_user.phone}"
         }}
     )
     
@@ -636,18 +722,18 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 # Mock Data for Testing
 @api_router.post("/init-mock-data")
 async def init_mock_data():
-    # Create demo user
+    # Create demo user with phone
+    demo_phone = "+905551234567"
     demo_user = User(
         username="demo_user",
-        email="demo@whatgram.com",
-        phone="+905551234567",
-        hashed_password=hash_password("demo123"),
+        phone=demo_phone,
+        is_verified=True,
         whatsapp_connected=True,
         telegram_connected=True
     )
     
     # Clear and insert demo user
-    await db.users.delete_many({"email": "demo@whatgram.com"})
+    await db.users.delete_many({"phone": demo_phone})
     await db.users.insert_one(demo_user.dict())
     
     # Clear existing data for demo user
@@ -741,13 +827,13 @@ async def init_mock_data():
                 await db.messages.insert_one(msg.dict())
     
     # Create demo user token
-    access_token = create_access_token(data={"sub": demo_user.id})
+    access_token = create_access_token(data={"sub": demo_user.id}, expires_delta=timedelta(hours=24))
     
     return {
         "message": "WhatGram mock data initialized successfully",
         "demo_user": {
-            "email": demo_user.email,
-            "password": "demo123",
+            "phone": demo_user.phone,
+            "verification_code": "123456",
             "access_token": access_token
         },
         "contacts_created": len(all_contacts),

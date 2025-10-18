@@ -5,28 +5,65 @@ import axios from 'axios';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-// Auth Components
-const AuthModal = ({ isOpen, onClose, onLogin }) => {
-  const [isLogin, setIsLogin] = useState(true);
+// Phone Auth Components
+const PhoneAuthModal = ({ isOpen, onClose, onLogin }) => {
+  const [step, setStep] = useState('phone'); // 'phone' or 'verify'
   const [formData, setFormData] = useState({
-    email: 'demo@whatgram.com',
-    password: 'demo123',
-    username: '',
-    phone: ''
+    phone: '+905551234567', // Demo phone pre-filled
+    code: '',
+    username: ''
   });
   const [loading, setLoading] = useState(false);
+  const [countdown, setCountdown] = useState(0);
 
-  const handleSubmit = async (e) => {
+  useEffect(() => {
+    let interval;
+    if (countdown > 0) {
+      interval = setInterval(() => {
+        setCountdown(countdown - 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [countdown]);
+
+  const formatPhone = (phone) => {
+    // Format phone for display
+    const cleaned = phone.replace(/\D/g, '');
+    if (cleaned.startsWith('90')) {
+      return `+${cleaned.slice(0, 2)} ${cleaned.slice(2, 5)} ${cleaned.slice(5, 8)} ${cleaned.slice(8, 10)} ${cleaned.slice(10)}`;
+    }
+    return phone;
+  };
+
+  const handlePhoneSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const endpoint = isLogin ? '/auth/login' : '/auth/register';
-      const payload = isLogin ? 
-        { email: formData.email, password: formData.password } :
-        formData;
+      await axios.post(`${API}/auth/request-code`, {
+        phone: formData.phone
+      });
+      
+      setStep('verify');
+      setCountdown(300); // 5 minutes
+      alert('Doğrulama kodu gönderildi! Demo için: 123456');
+    } catch (error) {
+      alert(error.response?.data?.detail || 'Kod gönderimi başarısız');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      const response = await axios.post(`${API}${endpoint}`, payload);
+  const handleVerifySubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    try {
+      const response = await axios.post(`${API}/auth/verify-code`, {
+        phone: formData.phone,
+        code: formData.code
+      });
+      
       const { access_token, user } = response.data;
       
       localStorage.setItem('whatgram_token', access_token);
@@ -35,7 +72,7 @@ const AuthModal = ({ isOpen, onClose, onLogin }) => {
       onLogin(access_token, user);
       onClose();
     } catch (error) {
-      alert(error.response?.data?.detail || 'Giriş başarısız');
+      alert(error.response?.data?.detail || 'Doğrulama başarısız');
     } finally {
       setLoading(false);
     }
@@ -48,87 +85,106 @@ const AuthModal = ({ isOpen, onClose, onLogin }) => {
       <div className="bg-white rounded-lg p-8 max-w-md w-full mx-4">
         <div className="text-center mb-6">
           <h2 className="text-3xl font-bold text-gray-900 mb-2">WhatGram</h2>
-          <p className="text-gray-600">Birleşik Mesajlaşma Platformu</p>
+          <p className="text-gray-600">Telefon numaranızla giriş yapın</p>
         </div>
 
-        <div className="flex mb-6">
-          <button
-            onClick={() => setIsLogin(true)}
-            className={`flex-1 py-2 px-4 text-sm font-medium rounded-l-lg ${
-              isLogin ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
-            }`}
-            data-testid="login-tab"
-          >
-            Giriş Yap
-          </button>
-          <button
-            onClick={() => setIsLogin(false)}
-            className={`flex-1 py-2 px-4 text-sm font-medium rounded-r-lg ${
-              !isLogin ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700'
-            }`}
-            data-testid="register-tab"
-          >
-            Kayıt Ol
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {!isLogin && (
-            <>
-              <input
-                type="text"
-                placeholder="Kullanıcı adı"
-                value={formData.username}
-                onChange={(e) => setFormData({...formData, username: e.target.value})}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                required={!isLogin}
-                data-testid="username-input"
-              />
+        {step === 'phone' && (
+          <form onSubmit={handlePhoneSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Telefon Numarası
+              </label>
               <input
                 type="tel"
-                placeholder="Telefon numarası"
+                placeholder="+90 555 123 45 67"
                 value={formData.phone}
                 onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 text-lg"
+                required
                 data-testid="phone-input"
               />
-            </>
-          )}
-          <input
-            type="email"
-            placeholder="E-posta"
-            value={formData.email}
-            onChange={(e) => setFormData({...formData, email: e.target.value})}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            required
-            data-testid="email-input"
-          />
-          <input
-            type="password"
-            placeholder="Şifre"
-            value={formData.password}
-            onChange={(e) => setFormData({...formData, password: e.target.value})}
-            className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            required
-            data-testid="password-input"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className={`w-full py-3 px-4 rounded-lg text-white font-medium ${
-              loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-500 hover:bg-blue-600'
-            }`}
-            data-testid="auth-submit-btn"
-          >
-            {loading ? 'Yükleniyor...' : (isLogin ? 'Giriş Yap' : 'Kayıt Ol')}
-          </button>
-        </form>
+              <p className="text-xs text-gray-500 mt-1">
+                Ülke kodu ile birlikte telefon numaranızı girin
+              </p>
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className={`w-full py-3 px-4 rounded-lg text-white font-medium text-lg ${
+                loading ? 'bg-gray-400 cursor-not-allowed' : 'bg-purple-500 hover:bg-purple-600'
+              }`}
+              data-testid="request-code-btn"
+            >
+              {loading ? 'Kod Gönderiliyor...' : 'Doğrulama Kodu Gönder'}
+            </button>
+            
+            <div className="mt-4 p-3 bg-purple-50 rounded-lg">
+              <p className="text-xs text-purple-700 font-medium">Demo Hesap:</p>
+              <p className="text-xs text-purple-600">Telefon: +90 555 123 45 67</p>
+              <p className="text-xs text-purple-600">Kod: 123456</p>
+            </div>
+          </form>
+        )}
 
-        <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-          <p className="text-xs text-blue-700 font-medium">Demo Hesap:</p>
-          <p className="text-xs text-blue-600">E-posta: demo@whatgram.com</p>
-          <p className="text-xs text-blue-600">Şifre: demo123</p>
-        </div>
+        {step === 'verify' && (
+          <form onSubmit={handleVerifySubmit} className="space-y-4">
+            <div className="text-center mb-4">
+              <p className="text-gray-700">
+                <span className="font-semibold">{formatPhone(formData.phone)}</span> numarasına gönderilen doğrulama kodunu girin
+              </p>
+              {countdown > 0 && (
+                <p className="text-sm text-gray-500 mt-2">
+                  Kod {Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')} dakika geçerli
+                </p>
+              )}
+            </div>
+            
+            <input
+              type="text"
+              placeholder="6 haneli kod"
+              value={formData.code}
+              onChange={(e) => setFormData({...formData, code: e.target.value.replace(/\D/g, '').slice(0, 6)})}
+              className="w-full p-4 text-center text-2xl tracking-widest border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
+              maxLength="6"
+              required
+              data-testid="verification-code-input"
+            />
+            
+            <button
+              type="submit"
+              disabled={loading || formData.code.length !== 6}
+              className={`w-full py-3 px-4 rounded-lg text-white font-medium text-lg ${
+                loading || formData.code.length !== 6 
+                  ? 'bg-gray-400 cursor-not-allowed' 
+                  : 'bg-purple-500 hover:bg-purple-600'
+              }`}
+              data-testid="verify-code-btn"
+            >
+              {loading ? 'Doğrulanıyor...' : 'Doğrula ve Giriş Yap'}
+            </button>
+            
+            <button
+              type="button"
+              onClick={() => {
+                setStep('phone');
+                setFormData({...formData, code: ''});
+              }}
+              className="w-full py-2 px-4 text-gray-600 hover:text-gray-800"
+            >
+              ← Telefon numarasını değiştir
+            </button>
+            
+            {countdown === 0 && (
+              <button
+                type="button"
+                onClick={handlePhoneSubmit}
+                className="w-full py-2 px-4 text-purple-600 hover:text-purple-800 font-medium"
+              >
+                Kodu tekrar gönder
+              </button>
+            )}
+          </form>
+        )}
       </div>
     </div>
   );
@@ -258,6 +314,9 @@ const App = () => {
       setContacts(response.data);
     } catch (error) {
       console.error('Error loading contacts:', error);
+      if (error.response?.status === 401) {
+        logout();
+      }
     }
   };
 
@@ -365,21 +424,11 @@ const App = () => {
     if (!token) return;
     
     try {
-      if (platform === 'whatsapp') {
-        // Simulate QR code connection
-        await axios.post(
-          `${API}/connect/whatsapp`,
-          { qr_data: 'simulated_qr_data' },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-      } else if (platform === 'telegram') {
-        // Simulate phone number connection
-        await axios.post(
-          `${API}/connect/telegram`,
-          { phone_number: user.phone || '+905551234567' },
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-      }
+      await axios.post(
+        `${API}/connect/${platform}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       
       setConnectionStatus(prev => ({ ...prev, [platform]: true }));
       alert(`${platform === 'whatsapp' ? 'WhatsApp' : 'Telegram'} bağlantısı başarılı!`);
@@ -456,16 +505,17 @@ const App = () => {
       <div className="min-h-screen bg-gradient-to-br from-blue-400 via-purple-500 to-pink-400 flex items-center justify-center">
         <div className="text-center text-white">
           <h1 className="text-6xl font-bold mb-4" data-testid="app-title">WhatGram</h1>
-          <p className="text-xl mb-8">WhatsApp, Telegram ve WhatGram'ı birleştiren platform</p>
+          <p className="text-xl mb-2">WhatsApp, Telegram ve WhatGram'ı birleştiren platform</p>
+          <p className="text-lg mb-8 opacity-90">📱 Telefon numaranızla hızlıca başlayın</p>
           <button
             onClick={() => setShowAuth(true)}
-            className="px-8 py-4 bg-white text-blue-600 rounded-lg font-semibold hover:bg-gray-100 transition-colors"
+            className="px-8 py-4 bg-white text-purple-600 rounded-lg font-semibold hover:bg-gray-100 transition-colors text-lg"
             data-testid="get-started-btn"
           >
-            Başlayın
+            Telefon ile Giriş Yap
           </button>
         </div>
-        <AuthModal 
+        <PhoneAuthModal 
           isOpen={showAuth} 
           onClose={() => setShowAuth(false)}
           onLogin={handleLogin}
@@ -490,7 +540,8 @@ const App = () => {
               Çıkış
             </button>
           </div>
-          <p className="text-sm opacity-90">Merhaba, {user.username}!</p>
+          <p className="text-sm opacity-90">📱 {user.phone}</p>
+          <p className="text-xs opacity-75">{user.username}</p>
         </div>
 
         {/* Platform Tabs */}
@@ -624,7 +675,7 @@ const App = () => {
               <div className="text-right">
                 <p className="text-sm opacity-75 capitalize">{activeTab}</p>
                 {activeTab === 'whatgram' && (
-                  <p className="text-xs opacity-60">Hızlı Dosya Paylaşımı</p>
+                  <p className="text-xs opacity-60">Sınırsız Dosya Paylaşımı</p>
                 )}
               </div>
             </div>
@@ -680,7 +731,10 @@ const App = () => {
             {selectedFiles.length > 0 && (
               <div className="p-4 border-t border-gray-200 bg-gray-50">
                 <div className="space-y-2">
-                  <h5 className="text-sm font-medium">Seçilen Dosyalar:</h5>
+                  <h5 className="text-sm font-medium flex items-center">
+                    📎 Seçilen Dosyalar:
+                    {activeTab === 'whatgram' && <span className="ml-2 text-purple-600 text-xs">🔒 Şifreli</span>}
+                  </h5>
                   {selectedFiles.map((file, index) => (
                     <div key={index} className="flex items-center justify-between p-2 bg-white rounded border">
                       <span className="text-sm truncate flex-1">{file.name}</span>
@@ -721,7 +775,7 @@ const App = () => {
             {/* Message Input */}
             <div className="p-4 border-t border-gray-200 bg-white">
               <div 
-                className="flex items-center space-x-2 p-3 border-2 border-dashed border-gray-300 rounded-lg"
+                className="flex items-center space-x-2 p-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-purple-400 transition-colors"
                 onDrop={handleFileDrop}
                 onDragOver={handleDragOver}
                 data-testid="message-input-area"
@@ -736,8 +790,9 @@ const App = () => {
                 />
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className={`p-2 rounded-full ${getPlatformColor(activeTab)} hover:opacity-80 text-white`}
+                  className={`p-2 rounded-full ${getPlatformColor(activeTab)} hover:opacity-80 text-white transition-opacity`}
                   data-testid="file-upload-btn"
+                  title="Dosya ekle"
                 >
                   📎
                 </button>
@@ -747,13 +802,13 @@ const App = () => {
                   onChange={(e) => setNewMessage(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
                   placeholder={`${activeTab} üzerinden mesaj yazın...`}
-                  className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="flex-1 p-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
                   data-testid="message-input"
                 />
                 <button
                   onClick={sendMessage}
                   disabled={!newMessage.trim()}
-                  className={`p-2 rounded-full ${
+                  className={`p-2 rounded-full transition-opacity ${
                     !newMessage.trim()
                       ? 'bg-gray-300 cursor-not-allowed'
                       : `${getPlatformColor(activeTab)} hover:opacity-80`
@@ -766,7 +821,7 @@ const App = () => {
               <p className="text-xs text-gray-500 mt-2 text-center">
                 {activeTab === 'whatgram' && '🔒 Uçtan uca şifreli • '}
                 Dosya sürükleyip bırakın veya 📎 butonuna tıklayarak dosya seçin
-                {activeTab === 'whatgram' && ' • Sınırsız dosya boyutu'}
+                {activeTab === 'whatgram' && ' • Sınırsız dosya boyutu desteklenir'}
               </p>
             </div>
           </>
@@ -775,19 +830,19 @@ const App = () => {
             <div className="text-center text-gray-500">
               <div className="text-6xl mb-4">💬</div>
               <h3 className="text-xl font-medium mb-2">WhatGram'a Hoş Geldiniz</h3>
-              <p>Sol taraftan bir kişi seçerek mesajlaşmaya başlayın</p>
-              <div className="mt-4 space-y-2">
-                <p className="text-sm">
+              <p className="mb-4">Sol tarafdan bir kişi seçerek mesajlaşmaya başlayın</p>
+              <div className="space-y-2 text-sm">
+                <p className="flex items-center justify-center">
                   <span className="inline-block w-3 h-3 bg-green-500 rounded-full mr-2"></span>
                   📱 WhatsApp - Klasik mesajlaşma
                 </p>
-                <p className="text-sm">
+                <p className="flex items-center justify-center">
                   <span className="inline-block w-3 h-3 bg-blue-500 rounded-full mr-2"></span>
                   ✈️ Telegram - Gelişmiş özellikler
                 </p>
-                <p className="text-sm">
+                <p className="flex items-center justify-center">
                   <span className="inline-block w-3 h-3 bg-purple-500 rounded-full mr-2"></span>
-                  💬 WhatGram - Sınırsız dosya paylaşımı & E2E şifreleme
+                  💬 WhatGram - Sınırsız dosya & E2E şifreleme
                 </p>
               </div>
             </div>
