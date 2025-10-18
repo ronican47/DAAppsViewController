@@ -338,6 +338,9 @@ async def get_contacts(
         filter_dict["platform"] = platform.value
     
     contacts = await db.contacts.find(filter_dict).to_list(1000)
+    # Remove MongoDB ObjectId
+    for contact in contacts:
+        contact.pop("_id", None)
     return [Contact(**contact) for contact in contacts]
 
 
